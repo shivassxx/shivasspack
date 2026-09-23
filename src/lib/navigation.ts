@@ -10,6 +10,7 @@ export function primaryNavItems(categories: readonly { slug: string; name: strin
       href: `/packs/category/${category.slug}`,
       label: shortLabels[category.slug] ?? category.name,
     })),
+    { href: "/forum", label: "Forum" },
   ];
 }
 

@@ -149,6 +149,11 @@ export async function seedDatabase(db: Pick<Database, "transaction">, includeDem
         })),
       )
       .onConflictDoNothing();
+    await tx.insert(s.forumCategories).values([
+      { id: "fcat_genel", slug: "genel", name: "Genel sohbet", description: "Topluluk ve FiveM üzerine konuşmalar.", sortOrder: 0 },
+      { id: "fcat_paketler", slug: "paketler", name: "Paket tartışmaları", description: "Paket deneyimleri, öneriler ve karşılaştırmalar.", sortOrder: 1 },
+      { id: "fcat_yardim", slug: "yardim", name: "Yardım ve destek", description: "Kurulum, uyumluluk ve kullanım soruları.", sortOrder: 2 },
+    ]).onConflictDoNothing();
     await tx
       .insert(s.featureFlags)
       .values([

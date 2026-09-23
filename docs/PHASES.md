@@ -473,4 +473,29 @@ one `submission.resubmit` audit row in the same transaction. Invalid edits
 leave both fields and review decision untouched; the inline control is shown
 only when `pack.edit_own` is granted. Submission create/edit/resubmit JSON
 requests allow 256 KiB so the forms' supported 50,000-character descriptions
-can actually be saved; other API requests keep their 16 KiB cap.
+can actually be saved; other API requests keep their default 16 KiB cap unless
+their content contract sets a specific limit.
+
+## Phase 9 checkpoint (forum/moderation, in progress)
+
+The first forum slice provides real guest read / member create: three
+insert-only reference categories (general, pack discussion, help) were seeded
+with stable IDs; `/forum`, `/forum/[category]` and `/forum/topic/[slug]` render
+only enabled non-demo categories and visible non-demo topics. The navbar links
+to `/forum`. `/forum/new` and `POST /api/forum/topics` check an active session
+and `forum.topic.create`; `GET /api/forum/topics` supports category and page
+filters. Topic creation validates title/body, serializes same-base slug
+selection, locks the category, inserts the topic, increments category topic
+and post counters and the author's post count, and writes
+`forum.topic.create` audit in the same transaction. Listing returns a bounded
+page ordered by pin/activity; category/detail have canonical metadata and 404
+for closed/hidden/demo records. No reply or moderation controls are shown yet.
+The topic POST accepts up to 64 KiB for its 10,000-character text field.
+The PostgreSQL integration suite (34 tests total) covers permissions, category
+visibility, validation, duplicate-title slug allocation, counters, audit and
+hidden/closed topic exclusion. Production seed ran insert-only on the live
+database. The standalone HTTP flow verified guest/public reads, guest POST
+rejection and login redirect, member form + creation, repeated titles, topic
+detail/visibility gates, counter/audit updates and the API filter; all test
+fixtures were removed. External `/forum` and `/api/health` respond 200 on
+`0.0.0.0:3000`. Visual browser automation remains unavailable in this session.

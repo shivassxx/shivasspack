@@ -5,7 +5,7 @@ import { createDatabase, type Database } from "./connection";
 import { applicationRole, appendOnlyTables, migrationRole } from "./access";
 import { checkDatabase } from "../services/health";
 import { seedDatabase } from "./seed-data";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import * as schema from "./schema";
 import {
   AuthError,
@@ -67,6 +67,7 @@ import { getMemberRating, setPackRating } from "../services/packs/ratings";
 import { createPackComment, listPackComments } from "../services/packs/comments";
 import { recordPackView } from "../services/packs/views";
 import { getMemberDownloadHistory, getPackDownloadOptions, resolvePackDownload, DownloadError } from "../services/packs/downloads";
+import { createForumTopic, forumPage, getForumCategory, getForumTopic, listForumCategories, listForumTopics } from "../services/forum";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -342,11 +343,13 @@ test("seed is idempotent and preserves edited settings, roles and permissions", 
       await tx.execute(
         sql`delete from role_permissions where role_id='role_member' and permission_id='perm_pack.submit'`,
       );
+      await tx.update(schema.forumCategories).set({ enabled: false }).where(eq(schema.forumCategories.id, "fcat_genel"));
       const counts = () =>
         tx.execute(sql`select
         (select count(*) from users) as users, (select count(*) from packs) as packs,
         (select count(*) from pack_versions) as versions, (select count(*) from roles) as roles,
-        (select count(*) from role_permissions) as grants, (select count(*) from forum_topics) as topics,
+        (select count(*) from role_permissions) as grants, (select count(*) from forum_categories) as forum_categories,
+        (select count(*) from forum_topics) as topics,
         (select count(*) from news_articles) as news`);
       const before = await counts();
       await seedDatabase(tx, true);
@@ -359,6 +362,11 @@ test("seed is idempotent and preserves edited settings, roles and permissions", 
       const [role] = await tx.select().from(schema.roles).where(eq(schema.roles.key, "member"));
       assert.equal(setting!.value, "Custom name");
       assert.equal(role!.name, "Custom member");
+      const forumCategories = await tx.select({ id: schema.forumCategories.id, enabled: schema.forumCategories.enabled })
+        .from(schema.forumCategories)
+        .where(inArray(schema.forumCategories.id, ["fcat_genel", "fcat_paketler", "fcat_yardim"]));
+      assert.equal(forumCategories.length, 3);
+      assert.equal(forumCategories.find((category) => category.id === "fcat_genel")?.enabled, false);
       const [demo] = await tx
         .select()
         .from(schema.users)
@@ -1575,6 +1583,67 @@ test("authors add versions to approved packs with a single moving latest", async
       const audits = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
         .where(eq(schema.auditLogs.targetId, mine.id));
       assert.equal(audits.filter((row) => row.action === "pack.version_add").length, 2);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("forum topics are owner-authored, visible only in enabled categories and audited", async () => {
+  const rollback = new Error("ROLLBACK_FORUM_TOPIC_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const [user] = await tx.insert(schema.users).values({
+        username: `forum-${suffix}`, displayName: "Forum Author",
+        email: `forum-${suffix}@example.invalid`, roleId: role.id,
+      }).returning({ id: schema.users.id });
+      assert.ok(user);
+      const [category, closed, demo] = await tx.insert(schema.forumCategories).values([
+        { slug: `forum-${suffix}`, name: "Open Forum" },
+        { slug: `closed-${suffix}`, name: "Closed Forum", enabled: false },
+        { slug: `demo-${suffix}`, name: "Demo Forum", isDemo: true },
+      ]).returning({ id: schema.forumCategories.id, slug: schema.forumCategories.slug });
+      assert.ok(category && closed && demo);
+      const actor: Actor = { id: user.id, displayName: "Forum Author", roleKey: "member",
+        status: "active", banUntil: null, permissions: new Set<PermissionKey>(["forum.topic.create", "forum.read"]) };
+      const input = { categoryId: category.id, title: `Topic Title ${suffix}`, body: "A real question about pack installation and setup." };
+      assert.ok((await listForumCategories(db)).some((item) => item.id === category.id));
+      assert.equal(await getForumCategory(db, closed.slug), null);
+      assert.equal(await getForumCategory(db, demo.slug), null);
+      await assert.rejects(createForumTopic(db, { ...actor, permissions: new Set<PermissionKey>(["forum.read"]) }, input), /forum.topic.create/);
+      await assert.rejects(createForumTopic(db, { ...actor, status: "suspended" }, input), /Account unavailable/);
+      await assert.rejects(createForumTopic(db, actor, { ...input, categoryId: closed.id }), /kapalı kategori/);
+      await assert.rejects(createForumTopic(db, actor, { ...input, title: "Short" }), /başlığı/);
+      await assert.rejects(createForumTopic(db, actor, { ...input, body: "Short" }), /metni/);
+      const first = await createForumTopic(db, actor, input);
+      const second = await createForumTopic(db, actor, input);
+      assert.equal(second.slug, `${first.slug}-2`);
+      const detail = await getForumTopic(db, first.slug);
+      assert.equal(detail?.title, input.title);
+      assert.equal(detail?.body, input.body);
+      assert.equal(detail?.authorUsername, `forum-${suffix}`);
+      assert.equal((await listForumTopics(db, { categorySlug: category.slug })).total, 2);
+      assert.equal((await listForumTopics(db, { categorySlug: closed.slug })).total, 0);
+      assert.equal((await listForumTopics(db, { categorySlug: category.slug, page: 2 })).items.length, 0);
+      assert.equal(forumPage("9999"), 1000);
+      assert.equal(forumPage("bad"), 1);
+      const [counters] = await tx.select({ topics: schema.forumCategories.topicCount, posts: schema.forumCategories.postCount })
+        .from(schema.forumCategories).where(eq(schema.forumCategories.id, category.id));
+      assert.deepEqual(counters, { topics: 2, posts: 2 });
+      const [authorPosts] = await tx.select({ value: schema.users.postCount }).from(schema.users).where(eq(schema.users.id, user.id));
+      assert.equal(authorPosts?.value, 2);
+      const audits = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
+        .where(eq(schema.auditLogs.targetType, "forum_topic"));
+      assert.equal(audits.filter((entry) => entry.action === "forum.topic.create").length, 2);
+      await tx.update(schema.forumTopics).set({ status: "hidden" }).where(eq(schema.forumTopics.id, first.id));
+      assert.equal(await getForumTopic(db, first.slug), null);
+      assert.equal((await listForumTopics(db, { categorySlug: category.slug })).total, 1);
+      await tx.update(schema.forumCategories).set({ enabled: false }).where(eq(schema.forumCategories.id, category.id));
+      assert.equal(await getForumTopic(db, second.slug), null);
+      assert.equal((await listForumTopics(db, { categorySlug: category.slug })).total, 0);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }
