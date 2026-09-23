@@ -383,5 +383,36 @@ covering identity visibility, pack visibility, totals, unknown creators,
 out-of-range pages and malformed usernames. Standalone HTTP confirmed the
 header/bio, visible-only listing, JSON-LD and canonical URL,
 suspended/unknown/malformed 404s and the byline/card links; temporary users,
-packs and categories were removed, leaving zero residue. The submission
-wizard and `/admin/submissions` review queue remain open in this phase.
+packs and categories were removed, leaving zero residue.
+
+The submission flow closes the review half of Phase 8. Migration `0002` adds
+nullable `packs.review_note` with a 3-1000 character check, and the pure rules
+live in `src/lib/submission-state.ts` so the server and client forms share
+them: authors edit and (re)submit only `draft/changes_requested/rejected`,
+withdrawing and reviewing only `pending`, negative decisions require a 3-1000
+character note, and approvals never store one. `src/services/submissions.ts`
+validates fields and references (enabled non-demo categories, non-demo tags),
+builds collision-free slugs, enforces owner-only reads and writes, blocks
+self-review, publishes on approval with `publishedAt`, and writes
+`submission.create/update/submit/withdraw/review` audit rows inside the same
+transaction. Pages: `/submit` (create form plus the author's own list with
+status chips and notes), `/submit/[id]` (locked editor, review note banner,
+submit/withdraw actions), `/admin/submissions` (FIFO queue card with note box
+and approve/changes/reject buttons) with an admin-nav entry and a user-menu
+"Gönderilerim" link when `pack.submit` is granted. APIs: `GET/POST
+/api/submissions`, `PATCH /api/submissions/[id]`,
+`POST /api/submissions/[id]/status`, `GET /api/admin/submissions` and
+`PATCH /api/admin/submissions/[id]`. The unit suite is now 108 tests (the
+submission state machine) and the PostgreSQL suite has 32 (full flow:
+validation, ownership, transitions, queue membership, permission/self-review
+gates, note rules, publish, audit trail and form options); the downloads
+history fixture became deterministic with explicitly inserted timestamps
+because one transaction shares `now()` and the table is append-only for the
+app role. Standalone HTTP verified guest redirect/401 gates, validation
+rejections, the draft page, queue membership around submit and withdraw,
+pending locks, the note round-trip to the author, the moderator queue card
+versus the author's 403, resubmit clearing, approval with a live public
+detail, closed re-review and 409 locks on approved rows; temporary users,
+packs, categories, tags, sessions and audit rows were removed, leaving zero
+residue. `/submit/new` (a new version for an own approved pack) stays open in
+this phase.

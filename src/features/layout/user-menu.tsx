@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bookmark, Download, LogIn, Settings, MonitorSmartphone, LogOut, Shield, User as UserIcon } from "lucide-react";
+import { Bookmark, Download, LogIn, Settings, MonitorSmartphone, LogOut, Shield, Upload, User as UserIcon } from "lucide-react";
 import { requestJson } from "@/lib/client-api";
 import { toast } from "@/components/ui/toaster";
 
@@ -74,6 +74,7 @@ export function UserMenu({ user }: { user: MenuUser | null }) {
     { href: "/settings/profile", label: "Profil ayarları", icon: UserIcon },
     ...(user.permissions.includes("pack.view") ? [{ href: "/bookmarks", label: "Kaydedilen paketler", icon: Bookmark }] : []),
     ...(user.permissions.includes("download.use") ? [{ href: "/downloads", label: "İndirme geçmişi", icon: Download }] : []),
+    ...(user.permissions.includes("pack.submit") ? [{ href: "/submit", label: "Gönderilerim", icon: Upload }] : []),
     { href: "/settings/sessions", label: "Oturumlar", icon: MonitorSmartphone },
     { href: "/settings/account", label: "Hesap", icon: Settings },
     ...(canOpenAdmin ? [{ href: "/admin", label: "Yönetim", icon: Shield }] : []),

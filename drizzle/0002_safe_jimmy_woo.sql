@@ -1,0 +1,2 @@
+ALTER TABLE "packs" ADD COLUMN "review_note" text;--> statement-breakpoint
+ALTER TABLE "packs" ADD CONSTRAINT "pack_review_note" CHECK ("packs"."review_note" IS NULL OR char_length("packs"."review_note") BETWEEN 3 AND 1000);

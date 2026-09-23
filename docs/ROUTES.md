@@ -33,8 +33,8 @@
 | `/bookmarks`         | RSC    | member        | saved packs                          |
 | `/downloads`         | RSC    | member        | personal download history            |
 | `/notifications`     | RSC+CA | member        | mark read                            |
-| `/submit`            | RSC+CA | `pack.submit` | community pack submission wizard     |
-| `/submit/[id]`       | RSC+CA | author        | edit while `draft/changes_requested` |
+| `/submit`            | RSC+CA | `pack.submit` | create drafts + own submission list  |
+| `/submit/[id]`       | RSC+CA | author        | edit while `draft/changes_requested/rejected`, review note, submit/withdraw |
 | `/submit/new`        | RSC+CA | author        | new version for own pack             |
 
 ## Forum (public read, member write)
@@ -75,7 +75,9 @@ redirect, the **real check happens in every admin service call** (defense in dep
 Implemented so far: `/admin` overview, `/admin/packs`, `/admin/categories`,
 `/admin/tags`, `/admin/homepage` (section order, visibility and content), `/admin/settings`
 (site name, description and registration switch), `/admin/roles` (grant editor/custom roles),
-`/admin/users` (search and role assignment). Every mutation writes
+`/admin/users` (search and role assignment), `/admin/submissions` (oldest-first
+review queue; approve/reject/changes-requested with mandatory notes for negative
+decisions, self-review blocked). Every mutation writes
 an `audit_logs` row in the same transaction;
 `pack.publish`, `pack.feature` and `pack.delete` are checked separately from
 `pack.manage`, and `DELETE /api/admin/packs/[id]` performs an archive transition
@@ -94,6 +96,9 @@ instead of a destructive row delete.
 | `/api/auth/password/change`           | POST             | session         | rotate password, revoke others    |
 | `/api/auth/sessions`                  | GET/DELETE       | session         | list/revoke own sessions          |
 | `/api/profile`                        | PATCH            | `profile.edit_own` | update own display name/bio    |
+| `/api/submissions`                    | GET/POST         | `pack.submit`   | own list / create draft            |
+| `/api/submissions/[id]`               | PATCH            | `pack.edit_own` + owner | edit while author-editable  |
+| `/api/submissions/[id]/status`        | POST             | `pack.submit` + owner | `submit`/`withdraw` transitions |
 | `/api/packs`                          | GET              | public          | listing (filters, sort, page)     |
 | `/api/packs/[slug]`                   | GET              | public          | detail                            |
 | `/api/admin/categories`               | GET/POST         | `category.manage` | list/create categories          |
@@ -108,6 +113,8 @@ instead of a destructive row delete.
 | `/api/admin/roles/[id]`               | PATCH            | `role.manage`     | edit lower role name/description/grants |
 | `/api/admin/users`                    | GET              | `user.manage`     | search/page real users           |
 | `/api/admin/users/[id]`               | PATCH            | `user.manage` + `role.manage` | assign lower role |
+| `/api/admin/submissions`              | GET              | `submission.review` | pending queue, oldest first    |
+| `/api/admin/submissions/[id]`         | PATCH            | `submission.review` | approve/reject/changes + note  |
 | `/api/packs/[slug]/download`          | GET              | public          | 302 to source, deduped count, 10/h abuse cap |
 | `/api/packs/[slug]/view`              | POST             | public          | beacon, deduped per identity 30m |
 | `/api/packs/[slug]/rate`              | PUT/DELETE       | member          | set 1..5 / remove, recompute avg  |

@@ -43,6 +43,16 @@ import {
   listAdminPacks,
   updateAdminPack,
 } from "../services/admin/packs";
+import {
+  createSubmission,
+  getOwnSubmission,
+  listSubmissionOptions,
+  listSubmissionQueue,
+  listSubmissions,
+  reviewSubmission,
+  transitionSubmission,
+  updateSubmission,
+} from "../services/submissions";
 import { defaultHero, listAdminHomepageSections, listHomepageSections, updateHomepageSections } from "../services/homepage";
 import { getAdminRegistrationSetting, getAdminSiteDescription, readSiteDescription, readSiteName, registrationEnabled, updateRegistrationSetting, updateSiteDescription, updateSiteName } from "../services/admin/settings";
 import { createAdminRole, listAdminRoles, updateAdminRole } from "../services/admin/roles";
@@ -1115,11 +1125,29 @@ test("downloads resolve sources, rate-limit, count once per identity and keep me
       assert.equal(firstHistory.items[0]?.version, "1.0.0");
       const secondHistory = await getMemberDownloadHistory(db, viewer(users[1]!.id));
       assert.equal(secondHistory.total, 2);
-      assert.equal(secondHistory.items[0]?.title, "Download Test Pack Two");
-      assert.equal(secondHistory.items[0]?.mirror, "First");
-      assert.equal(secondHistory.items[1]?.title, "Download Test Pack One");
-      assert.equal(secondHistory.items[1]?.mirror, "US-Mirror");
+      assert.deepEqual(new Set(secondHistory.items.map((item) => item.title)),
+        new Set(["Download Test Pack One", "Download Test Pack Two"]));
+      assert.deepEqual(new Set(secondHistory.items.map((item) => item.mirror)),
+        new Set(["US-Mirror", "First"]));
       assert.equal((await getMemberDownloadHistory(db, viewer(users[1]!.id), 99)).page, 1);
+      // One transaction shares `now()`, so recency order needs explicit timestamps
+      // (the table is append-only for this role: fixtures are inserted, never updated).
+      const [ordered] = await tx.insert(schema.users).values({
+        username: `hist-${suffix}`, displayName: "History Order",
+        email: `hist-${suffix}@example.invalid`, roleId: role.id,
+      }).returning({ id: schema.users.id });
+      assert.ok(ordered);
+      await tx.insert(schema.downloads).values([
+        { packId: packOne.id, packVersionId: versionOne!.id, userId: ordered.id, ipHash: "0".repeat(64),
+          mirror: "primary", kind: "manual", createdAt: new Date(Date.now() - 60000) },
+        { packId: packTwo.id, packVersionId: versionTwo!.id, userId: ordered.id, ipHash: "1".repeat(64),
+          mirror: "First", kind: "manual", createdAt: new Date(Date.now() - 30000) },
+      ]);
+      const orderedHistory = await getMemberDownloadHistory(db, viewer(ordered.id));
+      assert.equal(orderedHistory.total, 2);
+      assert.equal(orderedHistory.items[0]?.title, "Download Test Pack Two");
+      assert.equal(orderedHistory.items[0]?.mirror, "First");
+      assert.equal(orderedHistory.items[1]?.title, "Download Test Pack One");
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }
@@ -1273,6 +1301,137 @@ test("public profiles expose active members and only their visible packs", async
       assert.equal(await getPublicProfile(db, `prof-demo-${suffix}`), null);
       assert.equal(await getPublicProfile(db, `prof-missing-${suffix}`), null);
       assert.equal(await getPublicProfile(db, "Not A Username!"), null);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("submission flow creates drafts, gates transitions and audits review decisions", async () => {
+  const rollback = new Error("ROLLBACK_SUBMISSION_FLOW_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const [author] = await tx.insert(schema.users).values({
+        username: `subm-${suffix}`, displayName: "Submission Author",
+        email: `subm-${suffix}@example.invalid`, roleId: role.id,
+      }).returning({ id: schema.users.id });
+      const [other] = await tx.insert(schema.users).values({
+        username: `subo-${suffix}`, displayName: "Other Member",
+        email: `subo-${suffix}@example.invalid`, roleId: role.id,
+      }).returning({ id: schema.users.id });
+      assert.ok(author && other);
+      const [category] = await tx.insert(schema.packCategories)
+        .values({ slug: `subm-${suffix}`, name: "Submit Category", kind: "graphics" })
+        .returning({ id: schema.packCategories.id });
+      const [hiddenCategory] = await tx.insert(schema.packCategories)
+        .values({ slug: `subm-hidden-${suffix}`, name: "Closed Category", kind: "pvp", enabled: false })
+        .returning({ id: schema.packCategories.id });
+      const [tag] = await tx.insert(schema.tags)
+        .values({ slug: `subm-${suffix}`, name: "Submit Tag" })
+        .returning({ id: schema.tags.id });
+      assert.ok(category && hiddenCategory && tag);
+
+      const memberPerms = new Set<PermissionKey>(["pack.view", "pack.submit", "pack.edit_own"]);
+      const authorActor: Actor = { id: author.id, displayName: "Submission Author", roleKey: "member", status: "active", banUntil: null, permissions: memberPerms };
+      const otherActor: Actor = { id: other.id, displayName: "Other Member", roleKey: "member", status: "active", banUntil: null, permissions: memberPerms };
+      const reviewerActor: Actor = { id: other.id, displayName: "Other Member", roleKey: "custom", status: "active", banUntil: null, permissions: new Set<PermissionKey>(["submission.review"]) };
+      const selfReviewerActor: Actor = { id: author.id, displayName: "Submission Author", roleKey: "custom", status: "active", banUntil: null, permissions: new Set<PermissionKey>(["submission.review"]) };
+      const noSubmitActor: Actor = { id: author.id, displayName: "Submission Author", roleKey: "custom", status: "active", banUntil: null, permissions: new Set<PermissionKey>(["pack.view"]) };
+
+      const base = { excerpt: "A fine summary line", description: "Long enough description for the flow test.", categoryId: category.id };
+      // Create drafts; duplicate titles get distinct slugs.
+      const created = await createSubmission(db, authorActor, { ...base, title: `Flow Pack ${suffix}`, tagIds: [tag.id], sourceUrl: "https://example.com/src", license: "MIT" });
+      assert.equal(created.status, "draft");
+      assert.equal(created.slug, `flow-pack-${suffix}`);
+      assert.deepEqual(created.tagIds, [tag.id]);
+      assert.equal(created.sourceUrl, "https://example.com/src");
+      const second = await createSubmission(db, authorActor, { ...base, title: `Flow Pack ${suffix}` });
+      assert.equal(second.slug, `flow-pack-${suffix}-2`);
+
+      // Input/reference/permission validation.
+      await assert.rejects(createSubmission(db, authorActor, { ...base, title: "ab" }), /Başlık/);
+      await assert.rejects(createSubmission(db, authorActor, { ...base, title: "Valid Title", categoryId: hiddenCategory.id }), /kapalı kategori/);
+      await assert.rejects(createSubmission(db, authorActor, { ...base, title: "Valid Title", tagIds: ["tag_missing"] }), /etiket/i);
+      await assert.rejects(createSubmission(db, noSubmitActor, { ...base, title: "Valid Title" }), /pack\.submit/);
+
+      // Only the author sees and edits their own submissions.
+      assert.equal((await listSubmissions(db, authorActor)).length, 2);
+      assert.equal((await listSubmissions(db, otherActor)).length, 0);
+      await assert.rejects(getOwnSubmission(db, otherActor, created.id), /bulunamadı/);
+      const edited = await updateSubmission(db, authorActor, created.id, { title: `Flow Pack ${suffix} Refined`, sourceUrl: "" });
+      assert.equal(edited.title, `Flow Pack ${suffix} Refined`);
+      assert.equal(edited.sourceUrl, null);
+      const detail = await getOwnSubmission(db, authorActor, created.id);
+      assert.deepEqual(detail.tagIds, [tag.id]);
+      assert.equal(await getPublishedPack(db, created.slug), null, "draft stays hidden");
+
+      // Transitions: withdraw is pending-only, submit locks editing and clears notes.
+      await assert.rejects(transitionSubmission(db, authorActor, created.id, "withdraw"), /yalnızca incelemedeki/i);
+      const pending = await transitionSubmission(db, authorActor, created.id, "submit");
+      assert.equal(pending.status, "pending");
+      assert.equal(pending.reviewNote, null);
+      await assert.rejects(transitionSubmission(db, authorActor, created.id, "submit"), /zaten incelemede/);
+      await assert.rejects(updateSubmission(db, authorActor, created.id, { title: "Locked While Pending" }), /düzenlenemez/);
+
+      // Queue shows only the author's pending item for the reviewer.
+      const queue = await listSubmissionQueue(db, reviewerActor);
+      assert.ok(queue.some((item) => item.id === created.id));
+      assert.ok(!queue.some((item) => item.id === second.id));
+      assert.equal(queue.find((item) => item.id === created.id)?.authorUsername, `subm-${suffix}`);
+
+      // Review gates: permission, self-review, decision and note validation.
+      await assert.rejects(reviewSubmission(db, authorActor, created.id, "approved", null), /submission\.review/);
+      await assert.rejects(reviewSubmission(db, selfReviewerActor, created.id, "approved", null), /kendi gönderinizi/i);
+      await assert.rejects(reviewSubmission(db, reviewerActor, created.id, "bogus", null), /Geçersiz inceleme/);
+      await assert.rejects(reviewSubmission(db, reviewerActor, created.id, "rejected", null), /3-1000/);
+
+      // Withdraw removes it from the queue; a rejection carries the note.
+      const withdrawn = await transitionSubmission(db, authorActor, created.id, "withdraw");
+      assert.equal(withdrawn.status, "draft");
+      assert.ok(!(await listSubmissionQueue(db, reviewerActor)).some((item) => item.id === created.id));
+      await transitionSubmission(db, authorActor, created.id, "submit");
+      const rejected = await reviewSubmission(db, reviewerActor, created.id, "rejected", "Ekran gorseli eksik.");
+      assert.equal(rejected.status, "rejected");
+      assert.equal(rejected.reviewNote, "Ekran gorseli eksik.");
+      assert.equal(await getPublishedPack(db, created.slug), null, "rejected stays hidden");
+
+      // Authors may edit rejections; resubmitting clears the previous note.
+      await updateSubmission(db, authorActor, created.id, { excerpt: "Updated summary after feedback" });
+      const resubmitted = await transitionSubmission(db, authorActor, created.id, "submit");
+      assert.equal(resubmitted.status, "pending");
+      assert.equal(resubmitted.reviewNote, null);
+
+      // Approval publishes, locks editing and blocks a second decision.
+      const approved = await reviewSubmission(db, reviewerActor, created.id, "approved", "not stored");
+      assert.equal(approved.status, "approved");
+      assert.equal(approved.reviewNote, null);
+      assert.ok(approved.publishedAt);
+      const visible = await getPublishedPack(db, created.slug);
+      assert.ok(visible);
+      assert.equal(visible.title, `Flow Pack ${suffix} Refined`);
+      await assert.rejects(updateSubmission(db, authorActor, created.id, { title: "Nope" }), /düzenlenemez/);
+      await assert.rejects(reviewSubmission(db, reviewerActor, created.id, "approved", null), /yalnızca incelemedeki/i);
+      await assert.rejects(reviewSubmission(db, reviewerActor, second.id, "approved", null), /yalnızca incelemedeki/i);
+
+      // Author listing reflects both statuses; every stage is audited.
+      const mine = await listSubmissions(db, authorActor);
+      assert.equal(mine.find((item) => item.id === created.id)?.status, "approved");
+      assert.equal(mine.find((item) => item.id === second.id)?.status, "draft");
+      const audits = await tx.select({ action: schema.auditLogs.action })
+        .from(schema.auditLogs).where(eq(schema.auditLogs.targetId, created.id));
+      const actions = audits.map((row) => row.action);
+      for (const expected of ["submission.create", "submission.update", "submission.submit", "submission.withdraw", "submission.review"]) {
+        assert.ok(actions.includes(expected), `audit ${expected}`);
+      }
+
+      // Form options expose enabled categories and non-demo tags only.
+      const options = await listSubmissionOptions(db);
+      assert.ok(options.categories.some((item) => item.id === category.id));
+      assert.ok(!options.categories.some((item) => item.id === hiddenCategory.id));
+      assert.ok(options.tags.some((item) => item.id === tag.id));
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }
