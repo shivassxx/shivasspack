@@ -67,7 +67,7 @@ import { getMemberRating, setPackRating } from "../services/packs/ratings";
 import { createPackComment, listPackComments } from "../services/packs/comments";
 import { recordPackView } from "../services/packs/views";
 import { getMemberDownloadHistory, getPackDownloadOptions, resolvePackDownload, DownloadError } from "../services/packs/downloads";
-import { createForumTopic, forumPage, getForumCategory, getForumTopic, listForumCategories, listForumTopics } from "../services/forum";
+import { createForumReply, createForumTopic, forumPage, getForumCategory, getForumTopic, listForumCategories, listForumReplies, listForumTopics } from "../services/forum";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -1644,6 +1644,66 @@ test("forum topics are owner-authored, visible only in enabled categories and au
       await tx.update(schema.forumCategories).set({ enabled: false }).where(eq(schema.forumCategories.id, category.id));
       assert.equal(await getForumTopic(db, second.slug), null);
       assert.equal((await listForumTopics(db, { categorySlug: category.slug })).total, 0);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("forum replies obey visibility and locks, update counts and audit atomically", async () => {
+  const rollback = new Error("ROLLBACK_FORUM_REPLY_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const [user] = await tx.insert(schema.users).values({
+        username: `reply-${suffix}`, displayName: "Reply Author",
+        email: `reply-${suffix}@example.invalid`, roleId: role.id,
+      }).returning({ id: schema.users.id });
+      const [category] = await tx.insert(schema.forumCategories).values({
+        slug: `reply-${suffix}`, name: "Reply Category",
+      }).returning({ id: schema.forumCategories.id });
+      assert.ok(user && category);
+      const actor: Actor = { id: user.id, displayName: "Reply Author", roleKey: "member",
+        status: "active", banUntil: null,
+        permissions: new Set<PermissionKey>(["forum.read", "forum.topic.create", "forum.reply.create"]) };
+      const topic = await createForumTopic(db, actor, { categoryId: category.id,
+        title: `Reply Topic ${suffix}`, body: "A conversation open for real member replies." });
+      assert.equal((await listForumReplies(db, topic.id)).total, 0);
+      await assert.rejects(createForumReply(db, { ...actor, permissions: new Set<PermissionKey>(["forum.read"]) },
+        { topicId: topic.id, body: "Hello!" }), /forum.reply.create/);
+      await assert.rejects(createForumReply(db, { ...actor, status: "suspended" },
+        { topicId: topic.id, body: "Hello!" }), /Account unavailable/);
+      await assert.rejects(createForumReply(db, actor, { topicId: topic.id, body: "xx" }), /Yanıt/);
+      await assert.rejects(createForumReply(db, actor, { topicId: `topic_unknown_${suffix}`, body: "Real reply" }), /bulunamadı/);
+      const first = await createForumReply(db, actor, { topicId: topic.id, body: "  First answer to the topic.  " });
+      const second = await createForumReply(db, actor, { topicId: topic.id, body: "Second answer to the topic." });
+      assert.equal(first.body, "First answer to the topic.");
+      const listed = await listForumReplies(db, topic.id);
+      assert.equal(listed.total, 2);
+      assert.deepEqual(new Set(listed.items.map((item) => item.id)), new Set([first.id, second.id]));
+      assert.equal((await listForumTopics(db, { categorySlug: `reply-${suffix}` })).items[0]?.replyCount, 2);
+      const [storedTopic] = await tx.select({ count: schema.forumTopics.replyCount, last: schema.forumTopics.lastReplyAt })
+        .from(schema.forumTopics).where(eq(schema.forumTopics.id, topic.id));
+      assert.equal(storedTopic?.count, 2);
+      assert.ok(storedTopic?.last);
+      const [storedCategory] = await tx.select({ topics: schema.forumCategories.topicCount, posts: schema.forumCategories.postCount })
+        .from(schema.forumCategories).where(eq(schema.forumCategories.id, category.id));
+      assert.deepEqual(storedCategory, { topics: 1, posts: 3 });
+      const [storedUser] = await tx.select({ posts: schema.users.postCount }).from(schema.users).where(eq(schema.users.id, user.id));
+      assert.equal(storedUser?.posts, 3);
+      const audits = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
+        .where(eq(schema.auditLogs.targetType, "forum_reply"));
+      assert.equal(audits.filter((entry) => entry.action === "forum.reply.create").length, 2);
+      await tx.update(schema.forumTopics).set({ isLocked: true }).where(eq(schema.forumTopics.id, topic.id));
+      await assert.rejects(createForumReply(db, actor, { topicId: topic.id, body: "Blocked answer" }), /kilitli/);
+      assert.equal((await listForumReplies(db, topic.id)).total, 2);
+      await tx.update(schema.forumReplies).set({ status: "hidden" }).where(eq(schema.forumReplies.id, first.id));
+      assert.equal((await listForumReplies(db, topic.id)).total, 1);
+      await tx.update(schema.forumCategories).set({ enabled: false }).where(eq(schema.forumCategories.id, category.id));
+      await assert.rejects(listForumReplies(db, topic.id), /bulunamadı/);
+      await assert.rejects(createForumReply(db, actor, { topicId: topic.id, body: "Blocked by category" }), /bulunamadı/);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

@@ -2,8 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDatabase } from "@/db/client";
+import { ReplyForm } from "@/features/forum/reply-form";
+import { getCurrentSession } from "@/lib/auth-context";
 import { formatDate } from "@/lib/utils";
-import { getForumTopic } from "@/services/forum";
+import { forumPage, getForumTopic, listForumReplies } from "@/services/forum";
+import { assertActive } from "@/services/rbac";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
@@ -13,10 +16,21 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     alternates: { canonical: `/forum/topic/${topic.slug}` } };
 }
 
-export default async function ForumTopicPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function ForumTopicPage({ params, searchParams }: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ page?: string }>;
+}) {
   const { slug } = await params;
-  const topic = await getForumTopic(getDatabase().db, slug);
+  const db = getDatabase().db;
+  const topic = await getForumTopic(db, slug);
   if (!topic) notFound();
+  const [replies, session] = await Promise.all([
+    listForumReplies(db, topic.id, forumPage((await searchParams).page)), getCurrentSession(),
+  ]);
+  let canReply = false;
+  if (session) {
+    try { assertActive(session.actor); canReply = session.actor.permissions.has("forum.reply.create"); } catch { /* read-only */ }
+  }
   return (
     <article className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6">
       <nav aria-label="İçerik yolu" className="text-xs text-zinc-500">
@@ -31,6 +45,24 @@ export default async function ForumTopicPage({ params }: { params: Promise<{ slu
         <p className="mt-3 text-sm text-zinc-400">{topic.authorName} (@{topic.authorUsername}) · <time dateTime={topic.createdAt.toISOString()}>{formatDate(topic.createdAt)}</time></p>
       </header>
       <div className="mt-7 whitespace-pre-wrap break-words rounded-xl border border-line bg-surface-900 p-6 text-sm leading-7 text-zinc-200">{topic.body}</div>
+      <section aria-labelledby="topic-replies" className="mt-10">
+        <h2 id="topic-replies" className="text-xl font-semibold text-white">Yanıtlar ({replies.total})</h2>
+        {replies.items.length ? <ol className="mt-4 space-y-3">
+          {replies.items.map((reply) => <li key={reply.id} className="rounded-xl border border-line bg-surface-900 p-5">
+            <p className="text-xs text-zinc-400">{reply.authorName} (@{reply.authorUsername}) · <time dateTime={reply.createdAt.toISOString()}>{formatDate(reply.createdAt)}</time></p>
+            <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-zinc-200">{reply.body}</p>
+          </li>)}
+        </ol> : <p className="mt-4 text-sm text-zinc-400">Henüz yanıt yok.</p>}
+        {replies.pageCount > 1 ? <nav aria-label="Yanıt sayfaları" className="mt-5 flex items-center gap-4 text-sm">
+          {replies.page > 1 ? <Link href={`/forum/topic/${topic.slug}?page=${replies.page - 1}`} className="text-accent-400">Önceki</Link> : null}
+          <span className="text-zinc-400">{replies.page} / {replies.pageCount}</span>
+          {replies.page < replies.pageCount ? <Link href={`/forum/topic/${topic.slug}?page=${replies.page + 1}`} className="text-accent-400">Sonraki</Link> : null}
+        </nav> : null}
+        {topic.isLocked ? <p className="mt-6 rounded-lg border border-line p-4 text-sm text-zinc-400">Bu konu kilitli; yeni yanıt eklenemez.</p>
+          : canReply ? <ReplyForm topicId={topic.id} />
+          : !session ? <p className="mt-6 text-sm text-zinc-400"><Link href={`/login?next=/forum/topic/${topic.slug}`} className="text-accent-400 hover:text-accent-300">Giriş yap</Link> ve yanıt yaz.</p>
+          : null}
+      </section>
     </article>
   );
 }

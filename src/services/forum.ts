@@ -131,3 +131,59 @@ export async function createForumTopic(db: Database, actor: Actor, input: NewFor
     throw new ForumError("conflict", "Benzersiz konu adresi oluşturulamadı, başlığı değiştirin.", 409);
   });
 }
+
+export async function listForumReplies(db: Database, topicId: string, inputPage = 1) {
+  const page = Math.min(1000, Math.max(1, Number.isInteger(inputPage) ? inputPage : 1));
+  const [topic] = await db.select({ id: s.forumTopics.id }).from(s.forumTopics)
+    .innerJoin(s.forumCategories, eq(s.forumCategories.id, s.forumTopics.categoryId))
+    .where(and(eq(s.forumTopics.id, topicId), eq(s.forumTopics.status, "visible"),
+      eq(s.forumTopics.isDemo, false), visibleCategory())).limit(1);
+  if (!topic) throw new ForumError("not_found", "Konu bulunamadı.", 404);
+  const visible = and(eq(s.forumReplies.topicId, topic.id), eq(s.forumReplies.status, "visible"), eq(s.forumReplies.isDemo, false));
+  const [items, totals] = await Promise.all([
+    db.select({
+      id: s.forumReplies.id, body: s.forumReplies.body, createdAt: s.forumReplies.createdAt,
+      authorName: s.users.displayName, authorUsername: s.users.username,
+    }).from(s.forumReplies).innerJoin(s.users, eq(s.users.id, s.forumReplies.authorId))
+      .where(visible).orderBy(desc(s.forumReplies.createdAt), desc(s.forumReplies.id))
+      .limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE),
+    db.select({ value: count() }).from(s.forumReplies).where(visible),
+  ]);
+  const total = Number(totals[0]?.value ?? 0);
+  return { items, total, page, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)) };
+}
+
+export async function createForumReply(db: Database, actor: Actor, input: { topicId?: unknown; body?: unknown }) {
+  assertActive(actor);
+  requirePermission(actor, "forum.reply.create");
+  const topicId = typeof input.topicId === "string" ? input.topicId : "";
+  const body = typeof input.body === "string" ? input.body.trim().replace(/\r\n/g, "\n") : "";
+  if (body.length < 3 || body.length > 5000) throw new ForumError("validation", "Yanıt 3-5000 karakter olmalı.", 400);
+  if (!topicId) throw new ForumError("validation", "Konu zorunlu.", 400);
+  return db.transaction(async (tx) => {
+    const [topic] = await tx.select({ id: s.forumTopics.id, categoryId: s.forumTopics.categoryId,
+      isLocked: s.forumTopics.isLocked }).from(s.forumTopics)
+      .where(and(eq(s.forumTopics.id, topicId), eq(s.forumTopics.status, "visible"), eq(s.forumTopics.isDemo, false)))
+      .for("update");
+    if (!topic) throw new ForumError("not_found", "Konu bulunamadı.", 404);
+    const [category] = await tx.select({ id: s.forumCategories.id }).from(s.forumCategories)
+      .where(and(eq(s.forumCategories.id, topic.categoryId), visibleCategory())).for("update");
+    if (!category) throw new ForumError("not_found", "Konu bulunamadı.", 404);
+    if (topic.isLocked) throw new ForumError("conflict", "Bu konu kilitli; yeni yanıt eklenemez.", 409);
+    const [created] = await tx.insert(s.forumReplies).values({
+      topicId: topic.id, authorId: actor.id!, body,
+    }).returning({ id: s.forumReplies.id, body: s.forumReplies.body, createdAt: s.forumReplies.createdAt });
+    if (!created) throw new Error("Forum reply insert returned no row.");
+    await tx.update(s.forumTopics).set({ replyCount: sql`${s.forumTopics.replyCount} + 1`, lastReplyAt: created.createdAt })
+      .where(eq(s.forumTopics.id, topic.id));
+    await tx.update(s.forumCategories).set({ postCount: sql`${s.forumCategories.postCount} + 1` })
+      .where(eq(s.forumCategories.id, category.id));
+    await tx.update(s.users).set({ postCount: sql`${s.users.postCount} + 1` })
+      .where(eq(s.users.id, actor.id!));
+    await tx.insert(s.auditLogs).values({
+      actorId: actor.id, action: "forum.reply.create", targetType: "forum_reply",
+      targetId: created.id, after: { topicId: topic.id },
+    });
+    return created;
+  });
+}

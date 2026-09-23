@@ -499,3 +499,16 @@ rejection and login redirect, member form + creation, repeated titles, topic
 detail/visibility gates, counter/audit updates and the API filter; all test
 fixtures were removed. External `/forum` and `/api/health` respond 200 on
 `0.0.0.0:3000`. Visual browser automation remains unavailable in this session.
+
+The reply slice adds visible, paginated replies to topic detail and `GET/POST
+/api/forum/replies` (guest read, active `forum.reply.create` write). Creating
+a reply locks the topic and enabled category, rejects hidden/demo/closed and
+locked topics, then inserts a visible reply, increments the topic/category/user
+post counters, records `lastReplyAt` and writes `forum.reply.create` audit in
+the same transaction. The page shows the newest replies first, a real form for
+permitted members, a login link for guests and a read-only locked notice.
+The PostgreSQL suite has 35 tests (reply permissions, validation, visibility,
+locks, counters, audit and category closure). Standalone HTTP verified guest
+reads/401 writes, member reply form and POST, visible list/detail, 400 invalid
+body, 404 unknown topic, 409 locked topic, hidden-reply exclusion and complete
+fixture cleanup; external health remains available on port 3000.

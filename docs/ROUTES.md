@@ -43,16 +43,17 @@
 | ---------------------------- | ------ | -------------------------- |
 | `/forum`                     | RSC    | public                     |
 | `/forum/[category]`          | RSC    | public                     |
-| `/forum/topic/[slug]`        | RSC    | public                     |
+| `/forum/topic/[slug]`        | RSC+API | public / `forum.reply.create` for replies |
 | `/forum/new`                 | RSC+API | `forum.topic.create`      |
 | `/forum/topic/[slug]/edit`   | RSC+CA | author or `forum.moderate` |
 | `/forum/topic/[slug]/reply`  | CA     | `forum.reply.create`       |
 | `/forum/topic/[slug]/report` | CA     | member                     |
 
-Implemented: category directory, category topic listing (paged), topic detail,
-and member topic creation. Only enabled non-demo categories and visible non-demo
-topics are public; `forum/new` and topic POST require the server-side grant.
-Replies, edits, reports and moderation routes remain in the next Phase 9 slices.
+Implemented: category directory, category topic listing (paged), topic detail
+with visible replies, member topic creation and reply creation. Only enabled
+non-demo categories and visible non-demo topics/replies are public; writes
+require their server-side forum grants. Edits, reports and moderation routes
+remain in the next Phase 9 slices.
 
 ## Admin (`/admin`, `admin.*` permission + server-side check)
 
@@ -131,7 +132,7 @@ instead of a destructive row delete.
 | `/api/search`                         | GET              | public          | unified FTS                       |
 | `/api/forum/topics`                   | GET/POST         | public/`forum.topic.create` | visible paged topics / audited topic creation |
 | `/api/forum/topics/[id]`              | GET/PATCH/DELETE | public/member   | PATCH author/mod                  |
-| `/api/forum/replies`                  | POST             | member          |                                   |
+| `/api/forum/replies`                  | GET/POST         | public/`forum.reply.create` | visible paged replies / audited create |
 | `/api/notifications`                  | GET/PATCH        | member          |                                   |
 | `/api/installer/manifest/[packageId]` | GET              | public          | signed manifest                   |
 | `/api/installer/report`               | POST             | installer token | install telemetry (opt-in)        |
