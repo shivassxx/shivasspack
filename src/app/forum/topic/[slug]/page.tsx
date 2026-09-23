@@ -4,9 +4,10 @@ import { notFound } from "next/navigation";
 import { getDatabase } from "@/db/client";
 import { ReplyForm } from "@/features/forum/reply-form";
 import { ForumReportForm } from "@/features/forum/report-form";
+import { ForumLikeButton } from "@/features/forum/like-button";
 import { getCurrentSession } from "@/lib/auth-context";
 import { formatDate } from "@/lib/utils";
-import { forumPage, getForumTopic, listForumReplies } from "@/services/forum";
+import { forumPage, getForumLikeStates, getForumTopic, listForumReplies } from "@/services/forum";
 import { assertActive } from "@/services/rbac";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
@@ -36,6 +37,8 @@ export default async function ForumTopicPage({ params, searchParams }: {
   const canEdit = active && session && (session.actor.permissions.has("forum.moderate") ||
     (session.actor.id === topic.authorId && session.actor.permissions.has("forum.edit_own") && !topic.isLocked));
   const canReport = active && session?.actor.permissions.has("forum.read");
+  const likeStates = canReport && session
+    ? await getForumLikeStates(db, session.actor, topic.id, replies.items.map((reply) => reply.id)) : null;
   return (
     <article className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6">
       <nav aria-label="İçerik yolu" className="text-xs text-zinc-500">
@@ -50,6 +53,8 @@ export default async function ForumTopicPage({ params, searchParams }: {
         <p className="mt-3 text-sm text-zinc-400">{topic.authorName} (@{topic.authorUsername}) · <time dateTime={topic.createdAt.toISOString()}>{formatDate(topic.createdAt)}</time></p>
         {canEdit ? <Link href={`/forum/topic/${topic.slug}/edit`} className="mt-3 inline-block text-sm text-accent-400 hover:text-accent-300">Konuyu düzenle</Link> : null}
         {canReport ? <ForumReportForm targetType="topic" targetId={topic.id} /> : null}
+        <div className="mt-3">{canReport && likeStates ? <ForumLikeButton type="topic" id={topic.id} liked={likeStates.topic} count={topic.likeCount} />
+          : <span className="text-xs text-zinc-400">{topic.likeCount} beğeni</span>}</div>
       </header>
       <div className="mt-7 whitespace-pre-wrap break-words rounded-xl border border-line bg-surface-900 p-6 text-sm leading-7 text-zinc-200">{topic.body}</div>
       <section aria-labelledby="topic-replies" className="mt-10">
@@ -59,6 +64,8 @@ export default async function ForumTopicPage({ params, searchParams }: {
             <p className="text-xs text-zinc-400">{reply.authorName} (@{reply.authorUsername}) · <time dateTime={reply.createdAt.toISOString()}>{formatDate(reply.createdAt)}</time></p>
             <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-zinc-200">{reply.body}</p>
             {canReport ? <ForumReportForm targetType="reply" targetId={reply.id} /> : null}
+            <div className="mt-3">{canReport && likeStates ? <ForumLikeButton type="reply" id={reply.id} liked={likeStates.replies.has(reply.id)} count={reply.likeCount} />
+              : <span className="text-xs text-zinc-400">{reply.likeCount} beğeni</span>}</div>
           </li>)}
         </ol> : <p className="mt-4 text-sm text-zinc-400">Henüz yanıt yok.</p>}
         {replies.pageCount > 1 ? <nav aria-label="Yanıt sayfaları" className="mt-5 flex items-center gap-4 text-sm">

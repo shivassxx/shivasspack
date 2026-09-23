@@ -67,7 +67,7 @@ import { getMemberRating, setPackRating } from "../services/packs/ratings";
 import { createPackComment, listPackComments } from "../services/packs/comments";
 import { recordPackView } from "../services/packs/views";
 import { getMemberDownloadHistory, getPackDownloadOptions, resolvePackDownload, DownloadError } from "../services/packs/downloads";
-import { createForumReply, createForumTopic, forumPage, getForumCategory, getForumTopic, listForumCategories, listForumModeration, listForumReplies, listForumTopics, moderateForumTopic, updateForumTopic } from "../services/forum";
+import { createForumReply, createForumTopic, forumPage, getForumCategory, getForumLikeStates, getForumTopic, listForumCategories, listForumModeration, listForumReplies, listForumTopics, moderateForumTopic, setForumLike, updateForumTopic } from "../services/forum";
 import { decideReport, listModerationReports, reportForumContent } from "../services/moderation";
 import { listBanTargets, setUserBan } from "../services/admin/users";
 import { createNews, getAdminNewsArticle, getPublishedArticle, listAdminNews, listNewsCategories, listPublishedNews, transitionNews, updateNews } from "../services/news";
@@ -1711,6 +1711,52 @@ test("forum replies obey visibility and locks, update counts and audit atomicall
       await tx.update(schema.forumCategories).set({ enabled: false }).where(eq(schema.forumCategories.id, category.id));
       await assert.rejects(listForumReplies(db, topic.id), /bulunamadı/);
       await assert.rejects(createForumReply(db, actor, { topicId: topic.id, body: "Blocked by category" }), /bulunamadı/);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("forum likes are idempotent and cannot touch hidden topics or replies", async () => {
+  const rollback = new Error("ROLLBACK_FORUM_LIKES_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const [user] = await tx.insert(schema.users).values({ username: `like-${suffix}`,
+        displayName: "Forum Liker", email: `like-${suffix}@example.invalid`, roleId: role.id })
+        .returning({ id: schema.users.id });
+      const [category] = await tx.insert(schema.forumCategories).values({ slug: `like-${suffix}`,
+        name: "Like Tests" }).returning({ id: schema.forumCategories.id });
+      assert.ok(user && category);
+      const actor: Actor = { id: user.id, displayName: "Forum Liker", roleKey: "member",
+        status: "active", banUntil: null,
+        permissions: new Set<PermissionKey>(["forum.read", "forum.topic.create", "forum.reply.create"]) };
+      const topic = await createForumTopic(db, actor, { categoryId: category.id,
+        title: `Like Topic ${suffix}`, body: "A topic that can be liked by an active forum member." });
+      const reply = await createForumReply(db, actor, { topicId: topic.id, body: "An answer to like." });
+      await assert.rejects(setForumLike(db, { ...actor, permissions: new Set() }, "topic", topic.id, true), /forum.read/);
+      await assert.rejects(setForumLike(db, { ...actor, status: "suspended" }, "topic", topic.id, true), /Account unavailable/);
+      assert.deepEqual(await setForumLike(db, actor, "topic", topic.id, true), { liked: true, likeCount: 1 });
+      assert.deepEqual(await setForumLike(db, actor, "topic", topic.id, true), { liked: true, likeCount: 1 });
+      assert.deepEqual(await setForumLike(db, actor, "reply", reply.id, true), { liked: true, likeCount: 1 });
+      assert.deepEqual(await setForumLike(db, actor, "reply", reply.id, true), { liked: true, likeCount: 1 });
+      const states = await getForumLikeStates(db, actor, topic.id, [reply.id]);
+      assert.equal(states.topic, true);
+      assert.equal(states.replies.has(reply.id), true);
+      const [stored] = await tx.select({ count: schema.forumTopics.likeCount }).from(schema.forumTopics)
+        .where(eq(schema.forumTopics.id, topic.id));
+      assert.equal(stored?.count, 1);
+      assert.deepEqual(await setForumLike(db, actor, "reply", reply.id, false), { liked: false, likeCount: 0 });
+      assert.deepEqual(await setForumLike(db, actor, "reply", reply.id, false), { liked: false, likeCount: 0 });
+      await tx.update(schema.forumReplies).set({ status: "hidden" }).where(eq(schema.forumReplies.id, reply.id));
+      await assert.rejects(setForumLike(db, actor, "reply", reply.id, true), /bulunamadı/);
+      await tx.update(schema.forumTopics).set({ status: "hidden" }).where(eq(schema.forumTopics.id, topic.id));
+      await assert.rejects(setForumLike(db, actor, "topic", topic.id, false), /bulunamadı/);
+      const [untouched] = await tx.select({ count: schema.forumTopics.likeCount }).from(schema.forumTopics)
+        .where(eq(schema.forumTopics.id, topic.id));
+      assert.equal(untouched?.count, 1);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

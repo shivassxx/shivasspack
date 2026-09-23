@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "@/db/connection";
 import * as s from "@/db/schema";
 import { isSafeSlug, slugify } from "@/lib/utils";
@@ -48,7 +48,7 @@ export function forumPage(value: unknown): number {
 const topicListSelection = {
   id: s.forumTopics.id, slug: s.forumTopics.slug, title: s.forumTopics.title,
   isPinned: s.forumTopics.isPinned, isLocked: s.forumTopics.isLocked,
-  replyCount: s.forumTopics.replyCount, viewCount: s.forumTopics.viewCount,
+  replyCount: s.forumTopics.replyCount, likeCount: s.forumTopics.likeCount, viewCount: s.forumTopics.viewCount,
   createdAt: s.forumTopics.createdAt, lastReplyAt: s.forumTopics.lastReplyAt,
   categorySlug: s.forumCategories.slug, categoryName: s.forumCategories.name,
   authorName: s.users.displayName, authorUsername: s.users.username,
@@ -143,7 +143,8 @@ export async function listForumReplies(db: Database, topicId: string, inputPage 
   const visible = and(eq(s.forumReplies.topicId, topic.id), eq(s.forumReplies.status, "visible"), eq(s.forumReplies.isDemo, false));
   const [items, totals] = await Promise.all([
     db.select({
-      id: s.forumReplies.id, body: s.forumReplies.body, createdAt: s.forumReplies.createdAt,
+      id: s.forumReplies.id, body: s.forumReplies.body, likeCount: s.forumReplies.likeCount,
+      createdAt: s.forumReplies.createdAt,
       authorName: s.users.displayName, authorUsername: s.users.username,
     }).from(s.forumReplies).innerJoin(s.users, eq(s.users.id, s.forumReplies.authorId))
       .where(visible).orderBy(desc(s.forumReplies.createdAt), desc(s.forumReplies.id))
@@ -287,5 +288,61 @@ export async function moderateForumTopic(db: Database, actor: Actor, id: string,
       before: { status: before.status, isLocked: before.isLocked, isPinned: before.isPinned },
       after: { status: updated.status, isLocked: updated.isLocked, isPinned: updated.isPinned } });
     return updated;
+  });
+}
+
+export type ForumLikeType = "topic" | "reply";
+
+export async function getForumLikeStates(db: Database, actor: Actor, topicId: string, replyIds: string[]) {
+  if (!actor.id || actor.status !== "active" || (actor.banUntil && actor.banUntil > new Date())) {
+    return { topic: false, replies: new Set<string>() };
+  }
+  const [topicLike, replyLikes] = await Promise.all([
+    db.select({ id: s.likes.id }).from(s.likes).where(and(eq(s.likes.userId, actor.id),
+      eq(s.likes.targetType, "topic"), eq(s.likes.targetId, topicId))).limit(1),
+    replyIds.length ? db.select({ id: s.likes.targetId }).from(s.likes).where(and(eq(s.likes.userId, actor.id),
+      eq(s.likes.targetType, "reply"), inArray(s.likes.targetId, replyIds))) : Promise.resolve([]),
+  ]);
+  return { topic: topicLike.length > 0, replies: new Set(replyLikes.map((item) => item.id)) };
+}
+
+export async function setForumLike(db: Database, actor: Actor, type: ForumLikeType, id: string, liked: boolean) {
+  assertActive(actor);
+  requirePermission(actor, "forum.read");
+  if (type !== "topic" && type !== "reply") throw new ForumError("validation", "Geçersiz beğeni hedefi.", 400);
+  return db.transaction(async (tx) => {
+    const [parent] = type === "reply" ? await tx.select({ topicId: s.forumReplies.topicId })
+      .from(s.forumReplies).where(eq(s.forumReplies.id, id)).limit(1) : [null];
+    if (type === "reply" && !parent) throw new ForumError("not_found", "İçerik bulunamadı.", 404);
+    const [topic] = await tx.select({ id: s.forumTopics.id, categoryId: s.forumTopics.categoryId,
+      count: s.forumTopics.likeCount }).from(s.forumTopics)
+      .where(and(eq(s.forumTopics.id, parent?.topicId ?? id),
+        eq(s.forumTopics.status, "visible"), eq(s.forumTopics.isDemo, false))).for("update");
+    if (!topic) throw new ForumError("not_found", "İçerik bulunamadı.", 404);
+    const [category] = await tx.select({ id: s.forumCategories.id }).from(s.forumCategories)
+      .where(and(eq(s.forumCategories.id, topic.categoryId), visibleCategory())).limit(1);
+    if (!category) throw new ForumError("not_found", "İçerik bulunamadı.", 404);
+    let countBefore = topic.count;
+    if (type === "reply") {
+      const [reply] = await tx.select({ id: s.forumReplies.id, count: s.forumReplies.likeCount }).from(s.forumReplies)
+        .where(and(eq(s.forumReplies.id, id), eq(s.forumReplies.topicId, topic.id),
+          eq(s.forumReplies.status, "visible"), eq(s.forumReplies.isDemo, false))).for("update");
+      if (!reply) throw new ForumError("not_found", "İçerik bulunamadı.", 404);
+      countBefore = reply.count;
+    }
+    const whereLike = and(eq(s.likes.targetType, type), eq(s.likes.targetId, id), eq(s.likes.userId, actor.id!));
+    const changed = liked
+      ? await tx.insert(s.likes).values({ targetType: type, targetId: id, userId: actor.id! })
+        .onConflictDoNothing().returning({ id: s.likes.id })
+      : await tx.delete(s.likes).where(whereLike).returning({ id: s.likes.id });
+    if (!changed.length) return { liked, likeCount: countBefore };
+    const delta = liked ? 1 : -1;
+    const [updated] = type === "topic"
+      ? await tx.update(s.forumTopics).set({ likeCount: sql`${s.forumTopics.likeCount} + ${delta}` })
+        .where(eq(s.forumTopics.id, topic.id)).returning({ count: s.forumTopics.likeCount })
+      : await tx.update(s.forumReplies).set({ likeCount: sql`${s.forumReplies.likeCount} + ${delta}` })
+        .where(eq(s.forumReplies.id, id)).returning({ count: s.forumReplies.likeCount });
+    if (!updated) throw new Error("Forum like update returned no row.");
+    return { liked, likeCount: updated.count };
   });
 }

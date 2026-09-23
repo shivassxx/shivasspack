@@ -49,7 +49,7 @@
 
 Implemented: category directory, category topic listing (paged), topic detail
 with visible replies, member topic creation and reply creation, author edit,
-and moderator lock/pin/hide/reinstate actions. Only enabled non-demo categories
+member topic/reply likes and moderator lock/pin/hide/reinstate actions. Only enabled non-demo categories
 and visible non-demo topics/replies are public; writes require their server-side
 forum grants. Member topic/reply reports and the moderator decision queue are
 implemented. Moderators can search and ban lower-ranked members for a bounded
@@ -134,6 +134,7 @@ instead of a destructive row delete.
 | `/api/forum/topics`                   | GET/POST         | public/`forum.topic.create` | visible paged topics / audited topic creation |
 | `/api/forum/topics/[id]`              | PATCH            | `forum.edit_own` owner / `forum.moderate` | update title/body (stable slug) |
 | `/api/forum/replies`                  | GET/POST         | public/`forum.reply.create` | visible paged replies / audited create |
+| `/api/forum/likes/[type]/[id]`         | PUT/DELETE       | active `forum.read` | idempotent topic/reply likes and counters |
 | `/api/forum/reports`                  | POST             | active `forum.read` | topic/reply reports, one active per member and target |
 | `/api/admin/forum/topics/[id]`        | PATCH            | `forum.moderate` | lock/unlock, pin/unpin, hide/show |
 | `/api/admin/moderation/[id]`          | PATCH            | `moderation.resolve` | reviewing/resolved/dismissed with audit |

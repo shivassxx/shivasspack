@@ -558,6 +558,18 @@ were removed with zero fixture residue. The core Phase 9 forum/report/ban/audit
 flow is complete; remaining route-map concepts outside this slice are not
 presented as working links.
 
+Phase 9 follow-up: topic and reply likes now use the existing shared `likes`
+table, with active `forum.read` membership, parent/category visibility checks,
+idempotent PUT/DELETE and row-locked counter updates for each target. The
+topic page renders counts to guests and working like/unlike controls to active
+members; liked states are fetched in a batch for the paged replies. Hidden
+topics/replies reject writes. PostgreSQL verifies idempotency, permission,
+visibility and counter invariants (41 tests total). `npm run check` passed
+typecheck, lint, 114 unit tests and production build. Live HTTP verified
+member/guest gates, repeated likes, topic and reply counters, unlike,
+hidden-topic rejection and zero fixture residue; the rendered member page
+exposes `aria-pressed="true"` for a liked topic.
+
 ## Phase 10 checkpoint (news/AI, in progress)
 
 The first news slice adds three insert-only reference categories; `/news`,
