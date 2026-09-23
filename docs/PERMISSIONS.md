@@ -113,6 +113,9 @@ separately checked `pack.publish`, `pack.feature`, `pack.delete`) are enforced i
 `src/services/admin/*` before every write. Constraint collisions (duplicate slug,
 FK-restricted delete) map to `409`; every successful mutation appends an
 `audit_logs` row in the same transaction.
+`homepage.manage` protects homepage ordering/visibility; `admin.settings`
+protects the registration switch. Each service checks its exact key regardless
+of role name, and writes its mutation audit in the same transaction.
 
 ## Actor shape (used everywhere)
 

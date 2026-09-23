@@ -42,6 +42,7 @@ import {
   updateAdminPack,
 } from "../services/admin/packs";
 import { listAdminHomepageSections, listHomepageSections, updateHomepageSections } from "../services/homepage";
+import { getAdminRegistrationSetting, registrationEnabled, updateRegistrationSetting } from "../services/admin/settings";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -929,6 +930,36 @@ test("homepage builder enforces permissions, order, visibility and transaction a
       assert.equal(audit.length, 1);
       assert.equal(audit[0]?.action, "homepage.update");
       assert.deepEqual((audit[0]?.after as { sections: typeof updated }).sections, updated);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("registration switch is live, permission-gated and audit-logged", async () => {
+  const rollback = new Error("ROLLBACK_REGISTRATION_SETTING_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "admin"));
+      assert.ok(role);
+      const [user] = await tx.insert(schema.users).values({
+        username: `flag-${suffix}`, displayName: "Flag Editor", email: `flag-${suffix}@example.invalid`, roleId: role.id,
+      }).returning({ id: schema.users.id });
+      assert.ok(user);
+      const actor: Actor = { id: user.id, displayName: "Flag Editor", roleKey: "custom", status: "active",
+        banUntil: null, permissions: new Set(["admin.settings"]) };
+      const denied: Actor = { ...actor, permissions: new Set() };
+      await assert.rejects(getAdminRegistrationSetting(db, denied), /Missing permission/);
+      await assert.rejects(updateRegistrationSetting(db, denied, true), /Missing permission/);
+      await assert.rejects(updateRegistrationSetting(db, actor, "yes"), /boolean/);
+      const before = await registrationEnabled(db);
+      const after = await updateRegistrationSetting(db, actor, !before);
+      assert.equal(after?.enabled, !before);
+      assert.equal(await registrationEnabled(db), !before);
+      const audit = await tx.select({ action: schema.auditLogs.action, targetId: schema.auditLogs.targetId })
+        .from(schema.auditLogs).where(eq(schema.auditLogs.actorId, user.id));
+      assert.deepEqual(audit, [{ action: "feature_flag.update", targetId: "registrations_enabled" }]);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

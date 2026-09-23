@@ -199,9 +199,15 @@ Unimplemented Forum/News navigation links and the inactive installation-guide
 CTA have been removed/replaced with working destinations.
 
 `npm run check` passed TypeScript, lint, 96 unit tests and production build;
-`npm run db:test` passed 19 real-DB tests. Production HTTP E2E confirmed API
+`npm run db:test` passed 20 real-DB tests. Production HTTP E2E confirmed API
 401/403/400, section ordering/visibility on the public homepage, admin UI,
 audit insertion and restoration of the original section settings. The user
 `shivass` was assigned the seeded `super_admin` role (36/36 grants) in the local
-database with a `user.role.assign` audit row. No site-settings or feature-flags
-editor has been implemented yet, so Phase 6 remains open.
+database with a `user.role.assign` audit row. The first real feature-flag editor,
+`/admin/settings`, now controls `registrations_enabled` with `admin.settings`,
+transactional audit and a matching `/register` closed state. Production HTTP
+checks confirmed 401/403/400, live form/closed-state switching, audit and
+restoration of the original flag; the temporary user/session were removed.
+The unimplemented
+AI/installer flags are not exposed; broader site settings remain for a later
+slice, so Phase 6 remains open.
