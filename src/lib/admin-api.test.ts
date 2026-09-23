@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { adminErrorResponse } from "./admin-api";
 import { CatalogError } from "@/services/admin/catalog";
 import { PackAdminError } from "@/services/admin/packs";
+import { RoleAdminError } from "@/services/admin/roles";
+import { UserAdminError } from "@/services/admin/users";
 import { AuthorizationError } from "@/services/rbac";
 
 async function body(response: Response) {
@@ -21,6 +23,15 @@ describe("admin error mapping", () => {
     expect((await body(invalid)).error.code).toBe("validation");
 
     const missing = adminErrorResponse(new PackAdminError("not_found", "Paket bulunamadı.", 404));
+    expect(missing.status).toBe(404);
+    expect((await body(missing)).error.code).toBe("not_found");
+  });
+
+  it("maps role and user administration errors without exposing database details", async () => {
+    const duplicate = adminErrorResponse(new RoleAdminError("conflict", "Rol anahtarı kullanılıyor.", 409));
+    expect(duplicate.status).toBe(409);
+    expect((await body(duplicate)).error.code).toBe("conflict");
+    const missing = adminErrorResponse(new UserAdminError("not_found", "Kullanıcı bulunamadı.", 404));
     expect(missing.status).toBe(404);
     expect((await body(missing)).error.code).toBe("not_found");
   });

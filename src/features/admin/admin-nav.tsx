@@ -11,6 +11,8 @@ const items = [
   { href: "/admin/tags", label: "Etiketler", permission: "tag.manage" },
   { href: "/admin/homepage", label: "Ana sayfa", permission: "homepage.manage" },
   { href: "/admin/settings", label: "Ayarlar", permission: "admin.settings" },
+  { href: "/admin/users", label: "Kullanıcılar", permission: "user.manage" },
+  { href: "/admin/roles", label: "Roller ve izinler", permission: "role.manage" },
 ] as const;
 
 export function AdminNav({ permissions }: { permissions: string[] }) {

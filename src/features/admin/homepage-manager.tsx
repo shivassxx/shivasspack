@@ -30,7 +30,7 @@ export function HomepageManager({ initialSections }: { initialSections: Homepage
     try {
       const response = await fetch("/api/admin/homepage", {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sections: sections.map(({ key, enabled }) => ({ key, enabled })) }),
+        body: JSON.stringify({ sections: sections.map(({ key, enabled, maxItems }) => ({ key, enabled, ...(key === "hero" ? {} : { maxItems }) })) }),
       });
       const payload = await response.json() as { sections?: HomepageSection[]; error?: { message: string } };
       if (!response.ok || !payload.sections) throw new Error(payload.error?.message ?? "Değişiklik kaydedilemedi.");
@@ -55,7 +55,13 @@ export function HomepageManager({ initialSections }: { initialSections: Homepage
                 setMessage("");
               }} className="size-4 accent-orange-500" />{labels[section.key]}
             </label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {section.key !== "hero" ? <label className="text-xs text-zinc-400">Paket sayısı
+                <input type="number" min={1} max={12} value={section.maxItems ?? 6} disabled={busy} onChange={(event) => {
+                  setSections(sections.map((item) => item.key === section.key ? { ...item, maxItems: Number(event.target.value) } : item));
+                  setMessage("");
+                }} className="ml-2 h-8 w-16 rounded-md border border-line bg-surface-950 px-2 text-sm text-white" />
+              </label> : null}
               <button type="button" disabled={busy || index === 0} onClick={() => move(index, -1)} aria-label={`${labels[section.key]} yukarı`} className="rounded-md border border-line px-3 py-1.5 text-sm text-zinc-300 disabled:opacity-40">Yukarı</button>
               <button type="button" disabled={busy || index === sections.length - 1} onClick={() => move(index, 1)} aria-label={`${labels[section.key]} aşağı`} className="rounded-md border border-line px-3 py-1.5 text-sm text-zinc-300 disabled:opacity-40">Aşağı</button>
             </div>

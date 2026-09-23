@@ -147,42 +147,32 @@ export async function loadActor(db: Database, userId: string): Promise<Actor | n
   };
 }
 
-/**
- * Role assignment guard: the actor must outrank the target and only a
- * super_admin may hand out `admin` / `super_admin`.
- */
+/** Role assignment guard: actor must outrank both current and destination roles. */
 export async function assertCanAssignRole(
   db: Database,
   actor: Actor,
   targetRoleKey: string,
   currentTargetRoleKey?: string,
 ): Promise<void> {
+  assertActive(actor);
   requirePermission(actor, "role.manage");
-  if (actor.id === null) throw new AuthorizationError("Sign in required.", 401, "unauthenticated");
-
-  const roleKeys = [targetRoleKey, actor.roleKey];
+  const roleKeys = [targetRoleKey];
   if (currentTargetRoleKey) roleKeys.push(currentTargetRoleKey);
-  const roles = await db
-    .select({ id: s.roles.id, key: s.roles.key, rank: s.roles.rank, isSystem: s.roles.isSystem })
+  const [roles, [own]] = await Promise.all([
+    db.select({ key: s.roles.key, rank: s.roles.rank })
     .from(s.roles)
-    .where(inArray(s.roles.key, [...new Set(roleKeys)]));
+    .where(inArray(s.roles.key, [...new Set(roleKeys)])),
+    db.select({ rank: s.roles.rank }).from(s.users)
+      .innerJoin(s.roles, eq(s.roles.id, s.users.roleId)).where(eq(s.users.id, actor.id!)),
+  ]);
 
   const target = roles.find((role) => role.key === targetRoleKey);
-  const own = roles.find((role) => role.key === actor.roleKey);
   const current = currentTargetRoleKey ? roles.find((role) => role.key === currentTargetRoleKey) : undefined;
   if (!target || !own) throw new AuthorizationError("Unknown role.", 400, "unknown_role");
-
-  if (target.key === "super_admin" && actor.roleKey !== "super_admin") {
-    throw new AuthorizationError("Only a super admin may grant super admin.");
-  }
-  if (target.rank >= own.rank) {
+  if (target.rank <= 0 || target.rank >= own.rank) {
     throw new AuthorizationError("Cannot assign a role at or above your own rank.");
   }
   if (current && current.rank >= own.rank) {
     throw new AuthorizationError("Cannot modify a role at or above your own rank.");
-  }
-  // A non-super-admin must never become able to touch admin/super_admin rows.
-  if (actor.roleKey !== "super_admin" && (target.key === "admin" || current?.key === "admin")) {
-    throw new AuthorizationError("Only a super admin may modify admin roles.");
   }
 }

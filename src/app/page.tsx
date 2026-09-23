@@ -48,12 +48,12 @@ export default async function HomePage() {
   const db = getDatabase().db;
   const [categories, sections, siteName] = await Promise.all([listPublicCategories(db), listHomepageSections(db), getSiteName()]);
   const visible = sections.filter((section) => section.enabled);
-  const packKeys = visible.map((section) => section.key).filter((key): key is Exclude<HomepageKey, "hero"> => key !== "hero");
-  const packResults = await Promise.all(packKeys.map((key) => listPublishedPacks(db, {
-    pageSize: 6, sort: key === "trending" ? "trending" : "newest",
-    known: key === "known", featured: key === "featured",
+  const packSections = visible.filter((section): section is typeof section & { key: Exclude<HomepageKey, "hero"> } => section.key !== "hero");
+  const packResults = await Promise.all(packSections.map((section) => listPublishedPacks(db, {
+    pageSize: section.maxItems ?? 6, sort: section.key === "trending" ? "trending" : "newest",
+    known: section.key === "known", featured: section.key === "featured",
   })));
-  const packsBySection = new Map(packKeys.map((key, index) => [key, packResults[index]?.items ?? []]));
+  const packsBySection = new Map(packSections.map((section, index) => [section.key, packResults[index]?.items ?? []]));
   return (
     <>
       {visible.map((section) => section.key === "hero" ? (

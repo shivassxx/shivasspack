@@ -194,14 +194,16 @@ Status (2026-09-23): the first dynamic homepage slice is live. `/` reads enabled
 and enabled categories, and shows an honest empty state for empty sections.
 `/admin/homepage` and `GET/PUT /api/admin/homepage` let `homepage.manage` reorder
 and toggle only the four implemented sections (hero, featured, trending, known).
+Each enabled pack section also has an independently configurable 1-12 card limit;
+older API clients that omit it preserve the existing limit.
 The update is validated, permission-checked and audited in one DB transaction.
 Unimplemented Forum/News navigation links and the inactive installation-guide
 CTA have been removed/replaced with working destinations.
 The desktop/mobile category links now follow enabled categories from the same
 public query; disabling a category removes its menu link on the next request.
 
-`npm run check` passed TypeScript, lint, 97 unit tests and production build;
-`npm run db:test` passed 21 real-DB tests. Production HTTP E2E confirmed API
+`npm run check` passed TypeScript, lint, 99 unit tests and production build;
+`npm run db:test` passed 22 real-DB tests. Production HTTP E2E confirmed API
 401/403/400, section ordering/visibility on the public homepage, admin UI,
 audit insertion and restoration of the original section settings. The user
 `shivass` was assigned the seeded `super_admin` role (36/36 grants) in the local
@@ -217,3 +219,22 @@ the original name and removed the temporary user/session. The unimplemented
 AI/installer flags and sections without real data (news/forum/Discord) are not
 exposed in the editor; Phase 6 remains open for further supported settings and
 the dependent content phases.
+
+## Permission administration checkpoint (2026-09-23)
+
+`/admin/roles` now groups the 36 seeded permission keys with descriptions,
+search, per-group selection, editable lower-role grants and custom role creation.
+`/admin/users` searches/paginates real accounts and assigns lower-ranked roles
+when the actor holds both `user.manage` and `role.manage`. Self/equal/higher-rank
+edits and granting permissions the actor does not hold are rejected in the
+service layer. Guest's fixed public grant bundle and the top role cannot be
+edited; permission changes are reflected on the next request without session
+reissue. Successful mutations append `audit_logs` in their transaction.
+The DB suite has 22 real PostgreSQL tests, including modification of the seeded
+admin grant bundle inside a rollback transaction and immediate actor reload.
+Standalone production HTTP verified guest/member rejections, role CRUD,
+duplicate/unauthorized/hierarchy errors, user role assignment, live grant
+changes on an existing session, admin HTML pages and audit actions. Temporary
+test accounts, sessions, audit records and custom role were removed.
+The homepage card-limit API and editor also passed a standalone HTTP contract
+check (`1-12`, invalid input `400`) without changing the operator's sections.

@@ -74,7 +74,8 @@ Admin layout renders its own sidebar; `proxy.ts` performs a coarse cookie-presen
 redirect, the **real check happens in every admin service call** (defense in depth).
 Implemented so far: `/admin` overview, `/admin/packs`, `/admin/categories`,
 `/admin/tags`, `/admin/homepage` (section order and visibility), `/admin/settings`
-(site name and registration switch). Every mutation writes
+(site name and registration switch), `/admin/roles` (grant editor/custom roles),
+`/admin/users` (search and role assignment). Every mutation writes
 an `audit_logs` row in the same transaction;
 `pack.publish`, `pack.feature` and `pack.delete` are checked separately from
 `pack.manage`, and `DELETE /api/admin/packs/[id]` performs an archive transition
@@ -101,8 +102,12 @@ instead of a destructive row delete.
 | `/api/admin/tags/[id]`                | PATCH/DELETE     | `tag.manage`      | update/delete                   |
 | `/api/admin/packs`                    | GET/POST         | `pack.manage`     | list/create drafts              |
 | `/api/admin/packs/[id]`               | PATCH/DELETE     | `pack.manage`+    | update; DELETE archives         |
-| `/api/admin/homepage`                 | GET/PUT          | `homepage.manage` | list/order/toggle supported sections |
+| `/api/admin/homepage`                 | GET/PUT          | `homepage.manage` | order/toggle sections; 1-12 pack cards |
 | `/api/admin/settings`                 | GET/PUT          | `admin.settings`   | site name + registrations_enabled |
+| `/api/admin/roles`                    | GET/POST         | `role.manage`     | list grants/create lower custom role |
+| `/api/admin/roles/[id]`               | PATCH            | `role.manage`     | edit lower role name/description/grants |
+| `/api/admin/users`                    | GET              | `user.manage`     | search/page real users           |
+| `/api/admin/users/[id]`               | PATCH            | `user.manage` + `role.manage` | assign lower role |
 | `/api/packs/[slug]/download`          | GET              | public          | 302 to mirror, rate-limited       |
 | `/api/packs/[slug]/view`              | POST             | public          | beacon, deduped                   |
 | `/api/packs/[slug]/rate`              | POST             | member          | 1..5                              |

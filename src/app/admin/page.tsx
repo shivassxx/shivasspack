@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { FolderTree, PackageOpen, Tags, LayoutTemplate, Settings } from "lucide-react";
+import { FolderTree, PackageOpen, Tags, LayoutTemplate, Settings, Users, Shield } from "lucide-react";
 import { getCurrentSession } from "@/lib/auth-context";
 import { PageState } from "@/components/ui/page-state";
 
@@ -13,7 +13,9 @@ export default async function AdminPage() {
     { href: "/admin/categories", title: "Kategoriler", body: "Public paket taksonomisini, görünürlüğü ve sıralamayı yönet.", icon: FolderTree, permission: "category.manage" },
     { href: "/admin/tags", title: "Etiketler", body: "Paketlerde kullanılan aranabilir etiketleri yönet.", icon: Tags, permission: "tag.manage" },
     { href: "/admin/homepage", title: "Ana sayfa", body: "Yayındaki bölümleri sırala ve görünürlüklerini değiştir.", icon: LayoutTemplate, permission: "homepage.manage" },
-    { href: "/admin/settings", title: "Site ayarları", body: "Yeni üyeliklerin açık veya kapalı olmasını yönet.", icon: Settings, permission: "admin.settings" },
+    { href: "/admin/settings", title: "Site ayarları", body: "Site adını ve yeni üyelikleri yönet.", icon: Settings, permission: "admin.settings" },
+    { href: "/admin/users", title: "Kullanıcılar", body: "Hesapları ara ve alt seviyedeki hesaplara rol ata.", icon: Users, permission: "user.manage" },
+    { href: "/admin/roles", title: "Roller ve izinler", body: "İzin paketlerini düzenle ve yeni özel roller oluştur.", icon: Shield, permission: "role.manage" },
   ] as const;
   return (
     <section aria-labelledby="admin-overview-heading">

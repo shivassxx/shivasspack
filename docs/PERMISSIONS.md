@@ -52,7 +52,7 @@ forum.category.manage
 moderation.access    open moderation queue
 moderation.resolve   resolve reports
 user.ban             ban / temp ban / unban
-user.manage          edit roles, reset password, inspect
+user.manage          inspect users; assignment also requires role.manage
 user.delete
 ```
 
@@ -93,7 +93,14 @@ notification.manage
 
 - A moderator cannot grant themselves `admin.*` — role edits require `role.manage`
   **and** the target role must be strictly below the actor's rank.
-- Only `super_admin` may assign `admin` or `super_admin`.
+- Role and user edits are limited to **strictly lower rank**; the top role is
+  immutable through this editor. The seeded `super_admin` account can edit the
+  `admin` grant bundle; an `admin` cannot edit its own grant bundle.
+- New grants must be part of the editor's own effective permissions. Existing
+  grants the editor does not hold may be preserved or removed, never added.
+- User assignment requires both `user.manage` and `role.manage`, forbids
+  self-assignment and the nonassignable guest role. Existing sessions resolve
+  current grants on each request, so changes take effect immediately.
 - `super_admin` cannot be banned or deleted (service rejects).
 - Every admin/mod mutation writes an `AuditLog` row in the same transaction.
 
@@ -116,6 +123,9 @@ FK-restricted delete) map to `409`; every successful mutation appends an
 `homepage.manage` protects homepage ordering/visibility; `admin.settings`
 protects the site name and registration switch. Each service checks its exact key regardless
 of role name, and writes its mutation audit in the same transaction.
+`role.manage` protects custom role creation and lower-rank grant edits;
+`user.manage` exposes a paginated user list and, together with `role.manage`,
+permits lower-rank role assignment. No role-name branch is used for rank checks.
 
 ## Actor shape (used everywhere)
 

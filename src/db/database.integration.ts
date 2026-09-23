@@ -43,6 +43,9 @@ import {
 } from "../services/admin/packs";
 import { listAdminHomepageSections, listHomepageSections, updateHomepageSections } from "../services/homepage";
 import { getAdminRegistrationSetting, readSiteName, registrationEnabled, updateRegistrationSetting, updateSiteName } from "../services/admin/settings";
+import { createAdminRole, listAdminRoles, updateAdminRole } from "../services/admin/roles";
+import { assignUserRole, listAdminUsers } from "../services/admin/users";
+import { loadActor } from "../services/rbac";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -703,21 +706,21 @@ test("public pack queries expose only approved non-demo content with filters", a
       assert.ok(first && second && tag);
       await tx.insert(schema.packTags).values({ packId: first.id, tagId: tag.id });
 
-      const all = await listPublishedPacks(db, { pageSize: 1 });
+      const all = await listPublishedPacks(db, { category: category.slug, pageSize: 1 });
       assert.equal(all.total, 2);
       assert.equal(all.items.length, 1);
       assert.equal(all.pageCount, 2);
 
-      const search = await listPublishedPacks(db, { q: "sharp lighting", pageSize: 12 });
+      const search = await listPublishedPacks(db, { category: category.slug, q: "sharp lighting", pageSize: 12 });
       assert.equal(search.total, 1);
       assert.equal(search.items[0]?.id, first.id);
       assert.equal(search.items[0]?.tags[0]?.name, "Visual");
 
-      const known = await listPublishedPacks(db, { known: true });
+      const known = await listPublishedPacks(db, { category: category.slug, known: true });
       assert.deepEqual(known.items.map((item) => item.id), [first.id]);
-      const featured = await listPublishedPacks(db, { featured: true });
+      const featured = await listPublishedPacks(db, { category: category.slug, featured: true });
       assert.deepEqual(featured.items.map((item) => item.id), [first.id]);
-      const downloads = await listPublishedPacks(db, { sort: "downloads" });
+      const downloads = await listPublishedPacks(db, { category: category.slug, sort: "downloads" });
       assert.equal(downloads.items[0]?.id, second.id);
 
       const categories = await listPublicCategories(db);
@@ -918,7 +921,7 @@ test("homepage builder enforces permissions, order, visibility and transaction a
         permissions: new Set(["homepage.manage"]), status: "active", banUntil: null };
       const denied: Actor = { ...actor, permissions: new Set() };
       const sections = [
-        { key: "known", enabled: true }, { key: "trending", enabled: true },
+        { key: "known", enabled: true, maxItems: 3 }, { key: "trending", enabled: true },
         { key: "hero", enabled: false }, { key: "featured", enabled: true },
       ];
       await assert.rejects(listAdminHomepageSections(db, denied), /Missing permission/);
@@ -927,7 +930,11 @@ test("homepage builder enforces permissions, order, visibility and transaction a
       assert.deepEqual(updated.map((section) => section.key), ["known", "trending", "hero", "featured"]);
       const publicRows = await listHomepageSections(db);
       assert.deepEqual(publicRows.map((section) => section.key), updated.map((section) => section.key));
+      assert.equal(publicRows[0]?.maxItems, 3);
       assert.equal(publicRows[2]?.enabled, false);
+      const [config] = await tx.select({ value: schema.homepageSections.config }).from(schema.homepageSections)
+        .where(eq(schema.homepageSections.key, "known"));
+      assert.equal(config?.value.maxItems, 3);
       const audit = await tx.select({ action: schema.auditLogs.action, after: schema.auditLogs.after })
         .from(schema.auditLogs).where(eq(schema.auditLogs.actorId, user.id));
       assert.equal(audit.length, 1);
@@ -993,6 +1000,74 @@ test("site name changes are permission-gated, visible and audited", async () => 
       assert.equal(audit?.action, "site_setting.update");
       assert.equal(audit.targetId, "site_name");
       assert.equal(audit.after?.value, "Test Hub");
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("role grants and user assignment obey rank/permission boundaries with immediate effect", async () => {
+  const rollback = new Error("ROLLBACK_ADMIN_RBAC_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 10);
+      const [superRole] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "super_admin"));
+      const [adminRole] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "admin"));
+      const [memberRole] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(superRole && adminRole && memberRole);
+      const [manager] = await tx.insert(schema.users).values({
+        username: `rbacmanager-${suffix}`, displayName: "Role Manager", email: `rbacmanager-${suffix}@example.invalid`, roleId: superRole.id,
+      }).returning({ id: schema.users.id });
+      const [editor] = await tx.insert(schema.users).values({
+        username: `rbaceditor-${suffix}`, displayName: "Role Editor", email: `rbaceditor-${suffix}@example.invalid`, roleId: adminRole.id,
+      }).returning({ id: schema.users.id });
+      const [member] = await tx.insert(schema.users).values({
+        username: `rbacmember-${suffix}`, displayName: "Role Member", email: `rbacmember-${suffix}@example.invalid`, roleId: memberRole.id,
+      }).returning({ id: schema.users.id });
+      assert.ok(manager && editor && member);
+      // Permissions are loaded from the seed role; roleKey is not used in rank checks.
+      const managerActor = (await loadActor(db, manager.id))!;
+      const adminActor = (await loadActor(db, editor.id))!;
+      const denied: Actor = { ...managerActor, permissions: new Set() };
+      const input = { key: `event_team_${suffix}`, name: "Etkinlik Ekibi", description: "Sınırlı katalog yetkileri",
+        rank: 25, permissions: ["pack.view", "category.manage"] };
+
+      await assert.rejects(createAdminRole(db, denied, input), /Missing permission/);
+      const created = await createAdminRole(db, managerActor, input);
+      assert.equal(created.rank, 25);
+      await assert.rejects(createAdminRole(db, managerActor, input), /zaten kullanılıyor/);
+      const listing = await listAdminRoles(db, managerActor);
+      assert.equal(listing.roles.find((role) => role.id === adminRole.id)?.editable, true);
+      assert.equal(listing.roles.find((role) => role.id === superRole.id)?.editable, false);
+      assert.equal(listing.roles.find((role) => role.key === "guest")?.editable, false);
+      const currentAdmin = listing.roles.find((role) => role.id === adminRole.id);
+      assert.ok(currentAdmin);
+      await updateAdminRole(db, managerActor, adminRole.id, {
+        permissions: currentAdmin.permissions.filter((key) => key !== "tag.manage"),
+      });
+      assert.equal((await loadActor(db, editor.id))?.permissions.has("tag.manage"), false);
+      await assert.rejects(updateAdminRole(db, adminActor, adminRole.id, { name: "Cannot rename own rank" }), /düzenleme yetkin yok/);
+      await assert.rejects(updateAdminRole(db, adminActor, created.id, { permissions: ["user.delete"] }), /Sahip olmadığın izni/);
+      await assert.rejects(updateAdminRole(db, managerActor, superRole.id, { name: "Cannot rename top role" }), /düzenleme yetkin yok/);
+      await assert.rejects(assignUserRole(db, managerActor, manager.id, created.id), /Kendi rolünü/);
+      await assert.rejects(assignUserRole(db, adminActor, member.id, adminRole.id), /altındaki/);
+      await assert.rejects(assignUserRole(db, denied, member.id, created.id), /Missing permission/);
+
+      const assigned = await assignUserRole(db, managerActor, member.id, created.id);
+      assert.equal(assigned.roleKey, input.key);
+      assert.equal((await loadActor(db, member.id))?.permissions.has("category.manage"), true);
+      const result = await listAdminUsers(db, managerActor, { q: `rbacmember-${suffix}` });
+      assert.equal(result.total, 1);
+      assert.equal(result.items[0]?.roleKey, input.key);
+      const updated = await updateAdminRole(db, managerActor, created.id, {
+        name: "Etkinlik Yetkilisi", permissions: ["pack.view", "tag.manage"],
+      });
+      assert.equal(updated.name, "Etkinlik Yetkilisi");
+      assert.equal((await loadActor(db, member.id))?.permissions.has("category.manage"), false);
+      assert.equal((await loadActor(db, member.id))?.permissions.has("tag.manage"), true);
+      const audits = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
+        .where(eq(schema.auditLogs.actorId, manager.id));
+      assert.deepEqual(audits.map((row) => row.action).sort(), ["role.create", "role.update", "role.update", "user.role.assign"]);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }
