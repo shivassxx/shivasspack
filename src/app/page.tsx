@@ -2,13 +2,11 @@ import Link from "next/link";
 import { ArrowRight, Gauge, ShieldCheck, Wrench, Sparkles, Crosshair, Palette, Layers } from "lucide-react";
 import { getDatabase } from "@/db/client";
 import { PackCard } from "@/features/packs/pack-card";
-import { siteConfig } from "@/lib/site-config";
 import { getSiteName } from "@/lib/site-name";
-import { listHomepageSections, type HomepageKey } from "@/services/homepage";
+import { defaultHero, defaultPackTitles, listHomepageSections, type HomepageKey, type HomepageSection } from "@/services/homepage";
 import { listPublicCategories, listPublishedPacks, type PackListItem } from "@/services/packs/public";
 
 const icons = { graphics: Palette, pvp: Crosshair, reshade: Sparkles, enb: Layers, performance: Gauge, known: ShieldCheck, other: Layers };
-const packSectionTitles = { featured: "Öne çıkanlar", trending: "Popüler paketler", known: "Bilinen paketler" } as const;
 
 const features = [
   {
@@ -28,11 +26,11 @@ const features = [
   },
 ] as const;
 
-function PackSection({ section, items }: { section: keyof typeof packSectionTitles; items: PackListItem[] }) {
+function PackSection({ section, items }: { section: HomepageSection & { key: keyof typeof defaultPackTitles }; items: PackListItem[] }) {
   return (
-    <section aria-labelledby={`${section}-heading`} className="mx-auto max-w-7xl px-4 py-14 sm:px-6">
+    <section aria-labelledby={`${section.key}-heading`} className="mx-auto max-w-7xl px-4 py-14 sm:px-6">
       <div className="flex items-center justify-between gap-4">
-        <h2 id={`${section}-heading`} className="text-lg font-semibold text-white">{packSectionTitles[section]}</h2>
+        <h2 id={`${section.key}-heading`} className="text-lg font-semibold text-white">{section.title ?? defaultPackTitles[section.key]}</h2>
         <Link href="/packs" className="text-sm text-accent-400 hover:text-accent-300">Tüm paketler <ArrowRight className="inline size-4" aria-hidden /></Link>
       </div>
       {items.length > 0 ? (
@@ -64,33 +62,32 @@ export default async function HomePage() {
         />
         <div className="relative mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-24">
           <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-accent-500/30 bg-accent-500/10 px-3 py-1 text-xs font-medium text-accent-300">
-            FiveM için seçilmiş içerik
+             {section.hero?.eyebrow ?? defaultHero.eyebrow}
           </p>
           <h1 className="max-w-3xl text-4xl font-bold tracking-tight text-white sm:text-6xl">
-             {siteName} — grafik, PvP ve <span className="text-accent-500">performans</span>{" "}
-            paketleri tek yerde.
+              {siteName} — <span className="text-accent-500">{section.hero?.headline ?? defaultHero.headline}</span>
           </h1>
           <p className="mt-5 max-w-2xl text-base leading-relaxed text-zinc-400 sm:text-lg">
-            {siteConfig.description}
+             {section.hero?.description ?? defaultHero.description}
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
               href="/packs"
               className="inline-flex h-11 items-center gap-2 rounded-md bg-accent-600 px-5 text-sm font-medium text-white transition hover:bg-accent-500"
             >
-              Paketleri keşfet
+               {section.hero?.primaryLabel ?? defaultHero.primaryLabel}
               <ArrowRight className="size-4" aria-hidden />
             </Link>
             <Link
               href="/guidelines"
               className="inline-flex h-11 items-center gap-2 rounded-md border border-line bg-surface-900 px-5 text-sm font-medium text-zinc-300 transition hover:border-line-strong hover:text-white"
             >
-              Topluluk kuralları
+               {section.hero?.secondaryLabel ?? defaultHero.secondaryLabel}
             </Link>
           </div>
         </div>
       </section>
-      ) : <PackSection key={section.key} section={section.key} items={packsBySection.get(section.key) ?? []} />)}
+       ) : <PackSection key={section.key} section={section as HomepageSection & { key: keyof typeof defaultPackTitles }} items={packsBySection.get(section.key) ?? []} />)}
 
       {/* Kategoriler */}
       <section aria-labelledby="categories-heading" className="mx-auto max-w-7xl px-4 py-14 sm:px-6">

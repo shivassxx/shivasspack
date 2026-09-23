@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateHomepageSections } from "./homepage";
+import { defaultHero, validateHomepageSections } from "./homepage";
 
 describe("homepage section input", () => {
   const valid = ["featured", "hero", "known", "trending"].map((key) => ({ key, enabled: key !== "known" }));
@@ -15,6 +15,19 @@ describe("homepage section input", () => {
       expect(() => validateHomepageSections([{ key: "featured", enabled: true, maxItems: limit }, ...valid.slice(1)])).toThrow();
     }
     expect(() => validateHomepageSections(valid.map((row) => row.key === "hero" ? { ...row, maxItems: 3 } : row))).toThrow();
+  });
+
+  it("validates editable headings and hero copy while retaining legacy payloads", () => {
+    expect(validateHomepageSections(valid)[0]?.title).toBeUndefined();
+    const content = valid.map((row) => row.key === "hero" ? { ...row, hero: { ...defaultHero, headline: "  Yeni paketler  " } }
+      : row.key === "featured" ? { ...row, title: "  Seçkiler  " } : row);
+    const result = validateHomepageSections(content);
+    expect(result.find((row) => row.key === "hero")?.hero?.headline).toBe("Yeni paketler");
+    expect(result.find((row) => row.key === "featured")?.title).toBe("Seçkiler");
+    expect(() => validateHomepageSections(valid.map((row) => row.key === "featured" ? { ...row, title: " " } : row))).toThrow();
+    expect(() => validateHomepageSections(valid.map((row) => row.key === "hero" ? { ...row, hero: { ...defaultHero, primaryLabel: "\n" } } : row))).toThrow();
+    expect(() => validateHomepageSections(valid.map((row) => row.key === "hero" ? { ...row, hero: { ...defaultHero, headline: "x".repeat(121) } } : row))).toThrow();
+    expect(() => validateHomepageSections(valid.map((row) => row.key === "hero" ? { ...row, title: "Yanlış" } : row))).toThrow();
   });
 
   it("rejects missing, duplicate and unsupported sections", () => {

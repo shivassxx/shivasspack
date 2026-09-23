@@ -30,7 +30,8 @@ export function HomepageManager({ initialSections }: { initialSections: Homepage
     try {
       const response = await fetch("/api/admin/homepage", {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sections: sections.map(({ key, enabled, maxItems }) => ({ key, enabled, ...(key === "hero" ? {} : { maxItems }) })) }),
+        body: JSON.stringify({ sections: sections.map(({ key, enabled, maxItems, title, hero }) => ({ key, enabled,
+          ...(key === "hero" ? { hero } : { maxItems, title }) })) }),
       });
       const payload = await response.json() as { sections?: HomepageSection[]; error?: { message: string } };
       if (!response.ok || !payload.sections) throw new Error(payload.error?.message ?? "Değişiklik kaydedilemedi.");
@@ -48,7 +49,8 @@ export function HomepageManager({ initialSections }: { initialSections: Homepage
         <p className="mt-1 text-sm text-zinc-400">Yalnızca çalışan bölümler listelenir. Kategoriler ve bilgi alanı her zaman görünür.</p></div>
       <ol className="space-y-2">
         {sections.map((section, index) => (
-          <li key={section.key} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface-900 p-4">
+          <li key={section.key} className="rounded-xl border border-line bg-surface-900 p-4">
+           <div className="flex flex-wrap items-center justify-between gap-3">
             <label className="flex items-center gap-3 text-sm text-white">
               <input type="checkbox" checked={section.enabled} disabled={busy} onChange={(event) => {
                 setSections(sections.map((item) => item.key === section.key ? { ...item, enabled: event.target.checked } : item));
@@ -65,6 +67,26 @@ export function HomepageManager({ initialSections }: { initialSections: Homepage
               <button type="button" disabled={busy || index === 0} onClick={() => move(index, -1)} aria-label={`${labels[section.key]} yukarı`} className="rounded-md border border-line px-3 py-1.5 text-sm text-zinc-300 disabled:opacity-40">Yukarı</button>
               <button type="button" disabled={busy || index === sections.length - 1} onClick={() => move(index, 1)} aria-label={`${labels[section.key]} aşağı`} className="rounded-md border border-line px-3 py-1.5 text-sm text-zinc-300 disabled:opacity-40">Aşağı</button>
             </div>
+           </div>
+           {section.key === "hero" && section.hero ? <div className="mt-4 grid gap-3 border-t border-line pt-4 sm:grid-cols-2">
+             {([
+               ["eyebrow", "Üst yazı", 80], ["headline", "Başlık (site adından sonra)", 120],
+               ["description", "Açıklama", 320], ["primaryLabel", "Paketler bağlantısı", 40],
+               ["secondaryLabel", "Kurallar bağlantısı", 40],
+             ] as const).map(([key, label, max]) => <label key={key} className={`text-xs text-zinc-400 ${key === "description" ? "sm:col-span-2" : ""}`}>
+               {label}
+               {key === "description" ? <textarea value={section.hero?.[key] ?? ""} minLength={2} maxLength={max} rows={3} disabled={busy} onChange={(event) => {
+                 setSections(sections.map((item) => item.key === "hero" ? { ...item, hero: { ...item.hero!, [key]: event.target.value } } : item)); setMessage("");
+               }} className="mt-1 block w-full rounded-md border border-line bg-surface-950 p-2 text-sm text-white" />
+                 : <input value={section.hero?.[key] ?? ""} minLength={2} maxLength={max} disabled={busy} onChange={(event) => {
+                   setSections(sections.map((item) => item.key === "hero" ? { ...item, hero: { ...item.hero!, [key]: event.target.value } } : item)); setMessage("");
+                 }} className="mt-1 block h-9 w-full rounded-md border border-line bg-surface-950 px-2 text-sm text-white" />}
+             </label>)}
+           </div> : section.key !== "hero" ? <label className="mt-4 block border-t border-line pt-4 text-xs text-zinc-400">Bölüm başlığı
+             <input value={section.title ?? ""} minLength={2} maxLength={80} disabled={busy} onChange={(event) => {
+               setSections(sections.map((item) => item.key === section.key ? { ...item, title: event.target.value } : item)); setMessage("");
+             }} className="mt-1 block h-9 w-full rounded-md border border-line bg-surface-950 px-2 text-sm text-white" />
+           </label> : null}
           </li>
         ))}
       </ol>

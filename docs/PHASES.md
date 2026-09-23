@@ -238,3 +238,17 @@ changes on an existing session, admin HTML pages and audit actions. Temporary
 test accounts, sessions, audit records and custom role were removed.
 The homepage card-limit API and editor also passed a standalone HTTP contract
 check (`1-12`, invalid input `400`) without changing the operator's sections.
+
+### Homepage content editor (2026-09-23)
+
+The hero eyebrow, headline suffix (the live site name remains automatic),
+description and labels for the two working links are editable in
+`/admin/homepage`. The three pack-section headings are editable as well.
+Content is validated with length/control-character bounds, stored in each
+section's existing JSON config, and audited alongside visibility/order changes.
+Existing config and clients omitting the new fields retain current content;
+the links still target `/packs` and `/guidelines`. No migration or seed rewrite
+is required. Local verification: 100 unit tests and 22 PostgreSQL tests.
+Standalone production HTTP verified 401/400 responses, the editor HTML,
+live hero/headline display and real CTA link, and the audit row. The original
+section config/order/visibility and test account/session/audit were restored.

@@ -921,8 +921,10 @@ test("homepage builder enforces permissions, order, visibility and transaction a
         permissions: new Set(["homepage.manage"]), status: "active", banUntil: null };
       const denied: Actor = { ...actor, permissions: new Set() };
       const sections = [
-        { key: "known", enabled: true, maxItems: 3 }, { key: "trending", enabled: true },
-        { key: "hero", enabled: false }, { key: "featured", enabled: true },
+        { key: "known", enabled: true, maxItems: 3, title: "Sevilen paketler" }, { key: "trending", enabled: true },
+        { key: "hero", enabled: false, hero: { eyebrow: "Seçilmiş içerik", headline: "En yeni paketler burada.",
+          description: "Paketleri ve uyumluluk bilgilerini inceleyin.", primaryLabel: "Paketleri aç", secondaryLabel: "Kuralları oku" } },
+        { key: "featured", enabled: true },
       ];
       await assert.rejects(listAdminHomepageSections(db, denied), /Missing permission/);
       await assert.rejects(updateHomepageSections(db, denied, sections), /Missing permission/);
@@ -931,13 +933,21 @@ test("homepage builder enforces permissions, order, visibility and transaction a
       const publicRows = await listHomepageSections(db);
       assert.deepEqual(publicRows.map((section) => section.key), updated.map((section) => section.key));
       assert.equal(publicRows[0]?.maxItems, 3);
+      assert.equal(publicRows[0]?.title, "Sevilen paketler");
       assert.equal(publicRows[2]?.enabled, false);
+      assert.equal(publicRows[2]?.hero?.headline, "En yeni paketler burada.");
       const [config] = await tx.select({ value: schema.homepageSections.config }).from(schema.homepageSections)
         .where(eq(schema.homepageSections.key, "known"));
       assert.equal(config?.value.maxItems, 3);
+      assert.equal(config?.value.title, "Sevilen paketler");
+      await updateHomepageSections(db, actor, sections.map(({ key, enabled }) => ({ key, enabled })));
+      const legacy = await listHomepageSections(db);
+      assert.equal(legacy[0]?.title, "Sevilen paketler");
+      assert.equal(legacy[0]?.maxItems, 3);
+      assert.equal(legacy[2]?.hero?.headline, "En yeni paketler burada.");
       const audit = await tx.select({ action: schema.auditLogs.action, after: schema.auditLogs.after })
         .from(schema.auditLogs).where(eq(schema.auditLogs.actorId, user.id));
-      assert.equal(audit.length, 1);
+      assert.equal(audit.length, 2);
       assert.equal(audit[0]?.action, "homepage.update");
       assert.deepEqual((audit[0]?.after as { sections: typeof updated }).sections, updated);
       throw rollback;
