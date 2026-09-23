@@ -4,13 +4,16 @@ import { notFound } from "next/navigation";
 import { Bookmark, Download, Eye, Heart, ShieldCheck, Star } from "lucide-react";
 import { getDatabase } from "@/db/client";
 import { BookmarkButton } from "@/features/packs/bookmark-button";
+import { CommentForm } from "@/features/packs/comment-form";
 import { LikeButton } from "@/features/packs/like-button";
 import { RatingControl } from "@/features/packs/rating-control";
 import { getCurrentSession } from "@/lib/auth-context";
 import { getBookmarkState } from "@/services/packs/bookmarks";
+import { listPackComments } from "@/services/packs/comments";
 import { getPackLikeState } from "@/services/packs/likes";
 import { getMemberRating } from "@/services/packs/ratings";
 import { getPublishedPack } from "@/services/packs/public";
+import { assertActive } from "@/services/rbac";
 import { formatBytes, formatCompact, formatDate } from "@/lib/utils";
 
 const impactLabels = { low: "Düşük", medium: "Orta", high: "Yüksek", extreme: "Çok yüksek" } as const;
@@ -42,12 +45,20 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   };
 }
 
-export default async function PackDetailPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function PackDetailPage({ params, searchParams }: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ commentsPage?: string }>;
+}) {
   const { slug } = await params;
   const pack = await getPublishedPack(getDatabase().db, slug);
   if (!pack) notFound();
-  const session = await getCurrentSession();
-  const canInteract = Boolean(session?.actor.permissions.has("pack.view"));
+  const [session, query] = await Promise.all([getCurrentSession(), searchParams]);
+  let canInteract = false;
+  if (session?.actor.permissions.has("pack.view")) {
+    try { assertActive(session.actor); canInteract = true; }
+    catch { canInteract = false; }
+  }
+  const comments = await listPackComments(getDatabase().db, slug, Number(query.commentsPage ?? 1));
   const [isSaved, isLiked, myRating] = canInteract ? await Promise.all([
     getBookmarkState(getDatabase().db, session!.actor, pack.id),
     getPackLikeState(getDatabase().db, session!.actor, pack.id),
@@ -92,7 +103,8 @@ export default async function PackDetailPage({ params }: { params: Promise<{ slu
               <LikeButton slug={pack.slug} initialLiked={isLiked} initialCount={pack.likeCount} />
             </div>
             <RatingControl slug={pack.slug} initialValue={myRating} initialAverage={pack.ratingAvg} initialCount={pack.ratingCount} />
-          </div> : <Link href={`/login?next=${encodeURIComponent(`/packs/${pack.slug}`)}`} className="mt-5 inline-flex items-center gap-2 text-sm text-accent-400 hover:text-accent-300"><Bookmark className="size-4" aria-hidden />Kaydetmek, beğenmek veya puan vermek için giriş yap</Link>}
+          </div> : session ? <p className="mt-5 text-sm text-zinc-500">Bu hesapla paket etkileşimleri kullanılamıyor.</p>
+            : <Link href={`/login?next=${encodeURIComponent(`/packs/${pack.slug}`)}`} className="mt-5 inline-flex items-center gap-2 text-sm text-accent-400 hover:text-accent-300"><Bookmark className="size-4" aria-hidden />Kaydetmek, beğenmek veya puan vermek için giriş yap</Link>}
         </div>
 
         <aside className="rounded-xl border border-line bg-surface-900 p-4" aria-label="Paket özeti">
@@ -134,6 +146,26 @@ export default async function PackDetailPage({ params }: { params: Promise<{ slu
           {requirements.length > 0 ? <section><h2 className="text-sm font-semibold text-white">Gereksinimler</h2><dl className="mt-3 space-y-2 text-sm">{requirements.map(([key, value]) => <div key={key} className="flex justify-between gap-3"><dt className="text-zinc-500">{key}</dt><dd className="text-right text-zinc-300">{String(value)}</dd></div>)}</dl></section> : null}
         </aside>
       </div>
+      <section id="comments" aria-labelledby="comments-heading" className="border-t border-line py-9">
+        <h2 id="comments-heading" className="text-xl font-semibold text-white">Yorumlar ({comments.total})</h2>
+        {canInteract ? <CommentForm slug={pack.slug} /> : session
+          ? <p className="mt-4 text-sm text-zinc-500">Bu hesapla yorum yazamazsın.</p>
+          : <p className="mt-4 text-sm text-zinc-400"><Link href={`/login?next=${encodeURIComponent(`/packs/${pack.slug}`)}`} className="text-accent-400 hover:text-accent-300">Giriş yap</Link> ve yorum yaz.</p>}
+        {comments.items.length ? <ol className="mt-6 space-y-3">
+          {comments.items.map((comment) => <li key={comment.id} className="rounded-xl border border-line bg-surface-900 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span className="font-medium text-white">{comment.authorName} <span className="font-normal text-zinc-500">@{comment.authorUsername}</span></span>
+              <time dateTime={comment.createdAt.toISOString()} className="text-xs text-zinc-500">{formatDate(comment.createdAt)}</time>
+            </div>
+            <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-zinc-300">{comment.body}</p>
+          </li>)}
+        </ol> : <p className="mt-6 rounded-xl border border-line bg-surface-900 p-5 text-sm text-zinc-500">Henüz yorum yok.</p>}
+        {comments.pageCount > 1 ? <nav aria-label="Yorum sayfaları" className="mt-6 flex items-center justify-center gap-5 text-sm text-zinc-400">
+          {comments.page > 1 ? <Link href={`?commentsPage=${comments.page - 1}#comments`} className="text-accent-400">Önceki</Link> : null}
+          <span>{comments.page} / {comments.pageCount}</span>
+          {comments.page < comments.pageCount ? <Link href={`?commentsPage=${comments.page + 1}#comments`} className="text-accent-400">Sonraki</Link> : null}
+        </nav> : null}
+      </section>
     </article>
   );
 }

@@ -308,3 +308,14 @@ the real PostgreSQL suite passed all 26 tests. Standalone HTTP confirmed
 guest/invalid/not-found/archive responses, two-member average and update,
 idempotent removal, reset to zero and the detail control. Temporary users,
 sessions, category, pack and ratings were removed.
+
+The fourth interaction is a public comment thread on each published pack.
+`GET /api/packs/[slug]/comments` and the detail page paginate only visible,
+non-demo comments. Active members with `pack.view` may post 3-2000 character
+comments; creation and `comment_count` increment share a locked DB transaction.
+POST is limited to five attempts per five minutes per member through the
+existing database rate limiter; failed validation/visibility attempts also
+consume that bucket. Out-of-range page numbers clamp to the last valid page.
+Hidden categories, drafts and archived packs return 404. The unit suite now
+has 101 tests and the real PostgreSQL suite has 27, including input,
+permissions, hidden/demo exclusion, pagination and count.

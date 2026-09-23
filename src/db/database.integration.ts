@@ -49,6 +49,7 @@ import { loadActor } from "../services/rbac";
 import { getBookmarkState, getMemberBookmarks, setPackBookmark } from "../services/packs/bookmarks";
 import { getPackLikeState, setPackLike } from "../services/packs/likes";
 import { getMemberRating, setPackRating } from "../services/packs/ratings";
+import { createPackComment, listPackComments } from "../services/packs/comments";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -885,6 +886,59 @@ test("ratings recalculate the aggregate for create, update and removal without d
       assert.deepEqual(stored, { average: "0.0", count: 0 });
       await tx.update(schema.packCategories).set({ enabled: false }).where(eq(schema.packCategories.id, category.id));
       await assert.rejects(setPackRating(db, actor, slug, 3), /Paket bulunamadı/);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("pack comments enforce public visibility, member permissions and paginated reads", async () => {
+  const rollback = new Error("ROLLBACK_PACK_COMMENTS_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const [user] = await tx.insert(schema.users).values({ username: `comment-${suffix}`, displayName: "Comment Author",
+        email: `comment-${suffix}@example.invalid`, roleId: role.id }).returning({ id: schema.users.id });
+      const [category] = await tx.insert(schema.packCategories).values({ slug: `comment-${suffix}`,
+        name: "Comment Category", kind: "graphics" }).returning({ id: schema.packCategories.id });
+      assert.ok(user && category);
+      const slug = `comment-${suffix}`;
+      const [pack] = await tx.insert(schema.packs).values({ slug, title: "Comment Test Pack",
+        excerpt: "A public package", description: "A public package for comment tests.",
+        categoryId: category.id, creatorId: user.id, status: "approved", publishedAt: new Date(Date.now() - 60000),
+      }).returning({ id: schema.packs.id });
+      assert.ok(pack);
+      const actor: Actor = { id: user.id, displayName: "Comment Author", roleKey: "custom", status: "active",
+        banUntil: null, permissions: new Set(["pack.view"]) };
+      await assert.rejects(createPackComment(db, { ...actor, permissions: new Set() }, slug, "Güzel paket."), /Missing permission/);
+      await assert.rejects(createPackComment(db, { ...actor, status: "suspended" }, slug, "Güzel paket."));
+      await assert.rejects(createPackComment(db, actor, slug, "xx"), /3-2000/);
+      await assert.rejects(createPackComment(db, actor, "bad slug", "Güzel paket."), /Paket bulunamadı/);
+      const created = await createPackComment(db, actor, slug, "  Güzel paket.\r\nTeşekkürler!  ");
+      assert.equal(created.body, "Güzel paket.\nTeşekkürler!");
+      await tx.insert(schema.comments).values([
+        { packId: pack.id, userId: user.id, body: "Not public", status: "hidden" },
+        { packId: pack.id, userId: user.id, body: "Demo only", isDemo: true },
+      ]);
+      const first = await listPackComments(db, slug);
+      assert.equal(first.total, 1);
+      assert.equal(first.items[0]?.body, created.body);
+      assert.equal(first.items[0]?.authorName, "Comment Author");
+      for (let number = 0; number < 12; number += 1) await createPackComment(db, actor, slug, `Test yorum ${number}`);
+      const listing = await listPackComments(db, slug);
+      assert.equal(listing.total, 13);
+      assert.equal(listing.items.length, 12);
+      assert.equal(listing.pageCount, 2);
+      const secondPage = await listPackComments(db, slug, 2);
+      assert.equal(secondPage.items.length, 1);
+      assert.equal(new Set([...listing.items, ...secondPage.items].map((item) => item.id)).size, 13);
+      const [stored] = await tx.select({ count: schema.packs.commentCount }).from(schema.packs).where(eq(schema.packs.id, pack.id));
+      assert.equal(stored?.count, 13);
+      await tx.update(schema.packCategories).set({ enabled: false }).where(eq(schema.packCategories.id, category.id));
+      await assert.rejects(listPackComments(db, slug), /Paket bulunamadı/);
+      await assert.rejects(createPackComment(db, actor, slug, "Görünmez."), /Paket bulunamadı/);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

@@ -113,7 +113,7 @@ instead of a destructive row delete.
 | `/api/packs/[slug]/rate`              | PUT/DELETE       | member          | set 1..5 / remove, recompute avg  |
 | `/api/packs/[slug]/like`              | PUT/DELETE       | member          | idempotent like/remove + count    |
 | `/api/packs/[slug]/bookmark`          | PUT/DELETE       | member          | idempotent save/remove + count    |
-| `/api/packs/[slug]/comments`          | GET/POST         | public/member   | create needs auth                 |
+| `/api/packs/[slug]/comments`          | GET/POST         | public/member   | visible paged read (clamped); limited write |
 | `/api/search`                         | GET              | public          | unified FTS                       |
 | `/api/forum/topics`                   | GET/POST         | public/member   | create needs auth                 |
 | `/api/forum/topics/[id]`              | GET/PATCH/DELETE | public/member   | PATCH author/mod                  |
