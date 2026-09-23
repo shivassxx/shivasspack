@@ -8,6 +8,7 @@ const items = [
   { href: "/admin", label: "Genel", permission: "admin.dashboard" },
   { href: "/admin/packs", label: "Paketler", permission: "pack.manage" },
   { href: "/admin/submissions", label: "Gönderiler", permission: "submission.review" },
+  { href: "/admin/forum", label: "Forum", permission: "forum.moderate" },
   { href: "/admin/categories", label: "Kategoriler", permission: "category.manage" },
   { href: "/admin/tags", label: "Etiketler", permission: "tag.manage" },
   { href: "/admin/homepage", label: "Ana sayfa", permission: "homepage.manage" },

@@ -16,7 +16,7 @@ export async function GET(request: Request): Promise<Response> {
       return jsonError(404, "not_found", "Forum kategorisi bulunamadı.");
     }
     const result = await listForumTopics(db, { categorySlug: category, page: forumPage(params.get("page")) });
-    return jsonOk(result, 200, { "Cache-Control": "public, max-age=15, stale-while-revalidate=30" });
+    return jsonOk(result, 200, { "Cache-Control": "no-store" });
   } catch (error) {
     return forumErrorResponse(error);
   }

@@ -67,7 +67,7 @@ import { getMemberRating, setPackRating } from "../services/packs/ratings";
 import { createPackComment, listPackComments } from "../services/packs/comments";
 import { recordPackView } from "../services/packs/views";
 import { getMemberDownloadHistory, getPackDownloadOptions, resolvePackDownload, DownloadError } from "../services/packs/downloads";
-import { createForumReply, createForumTopic, forumPage, getForumCategory, getForumTopic, listForumCategories, listForumReplies, listForumTopics } from "../services/forum";
+import { createForumReply, createForumTopic, forumPage, getForumCategory, getForumTopic, listForumCategories, listForumModeration, listForumReplies, listForumTopics, moderateForumTopic, updateForumTopic } from "../services/forum";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -1704,6 +1704,77 @@ test("forum replies obey visibility and locks, update counts and audit atomicall
       await tx.update(schema.forumCategories).set({ enabled: false }).where(eq(schema.forumCategories.id, category.id));
       await assert.rejects(listForumReplies(db, topic.id), /bulunamadı/);
       await assert.rejects(createForumReply(db, actor, { topicId: topic.id, body: "Blocked by category" }), /bulunamadı/);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("forum authors edit; moderators lock, pin and hide topics with consistent counters", async () => {
+  const rollback = new Error("ROLLBACK_FORUM_MOD_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const users = await tx.insert(schema.users).values([1, 2].map((number) => ({
+        username: `mod-${number}-${suffix}`, displayName: `Forum User ${number}`,
+        email: `mod-${number}-${suffix}@example.invalid`, roleId: role.id,
+      }))).returning({ id: schema.users.id });
+      const [category] = await tx.insert(schema.forumCategories).values({
+        slug: `mod-${suffix}`, name: "Moderation Category",
+      }).returning({ id: schema.forumCategories.id });
+      assert.ok(users[0] && users[1] && category);
+      const author: Actor = { id: users[0]!.id, displayName: "Forum User 1", roleKey: "member", status: "active", banUntil: null,
+        permissions: new Set<PermissionKey>(["forum.topic.create", "forum.reply.create", "forum.edit_own"]) };
+      const other: Actor = { ...author, id: users[1]!.id };
+      const moderator: Actor = { ...other, permissions: new Set<PermissionKey>(["forum.moderate"]) };
+      const topic = await createForumTopic(db, author, { categoryId: category.id,
+        title: `Moderation Topic ${suffix}`, body: "A topic to test edit and moderation boundaries." });
+      const firstReply = await createForumReply(db, author, { topicId: topic.id, body: "First real reply." });
+      await createForumReply(db, author, { topicId: topic.id, body: "Second real reply." });
+      await tx.update(schema.forumReplies).set({ status: "hidden" }).where(eq(schema.forumReplies.id, firstReply.id));
+      assert.equal((await listForumReplies(db, topic.id)).total, 1);
+      await assert.rejects(updateForumTopic(db, other, topic.id, { title: "Unauthorized edit" }), /düzenleme iznin/);
+      await assert.rejects(updateForumTopic(db, author, topic.id, { title: "Short" }), /başlığı/);
+      await assert.rejects(moderateForumTopic(db, author, topic.id, "pin"), /forum.moderate/);
+      await assert.rejects(listForumModeration(db, author), /forum.moderate/);
+      const edited = await updateForumTopic(db, author, topic.id, { title: `Edited Topic ${suffix}` });
+      assert.equal(edited.slug, topic.slug, "editing keeps canonical slug stable");
+      assert.equal((await getForumTopic(db, topic.slug))?.title, edited.title);
+      const pinned = await moderateForumTopic(db, moderator, topic.id, "pin");
+      assert.equal(pinned.isPinned, true);
+      const locked = await moderateForumTopic(db, moderator, topic.id, "lock");
+      assert.equal(locked.isLocked, true);
+      await assert.rejects(updateForumTopic(db, author, topic.id, { title: "Blocked Edit" }), /Kilitli/);
+      await assert.rejects(createForumReply(db, author, { topicId: topic.id, body: "Blocked reply" }), /kilitli/);
+      await updateForumTopic(db, moderator, topic.id, { body: "Moderator correction on a locked forum topic." });
+      const listed = await listForumModeration(db, moderator);
+      assert.ok(listed.some((item) => item.id === topic.id && item.isPinned && item.isLocked));
+      const hidden = await moderateForumTopic(db, moderator, topic.id, "hide");
+      assert.equal(hidden.status, "hidden");
+      assert.equal(await getForumTopic(db, topic.slug), null);
+      const [afterHide] = await tx.select({ topics: schema.forumCategories.topicCount, posts: schema.forumCategories.postCount })
+        .from(schema.forumCategories).where(eq(schema.forumCategories.id, category.id));
+      assert.deepEqual(afterHide, { topics: 0, posts: 0 });
+      await moderateForumTopic(db, moderator, topic.id, "hide");
+      const [afterNoop] = await tx.select({ topics: schema.forumCategories.topicCount, posts: schema.forumCategories.postCount })
+        .from(schema.forumCategories).where(eq(schema.forumCategories.id, category.id));
+      assert.deepEqual(afterNoop, { topics: 0, posts: 0 });
+      assert.ok((await listForumModeration(db, moderator)).some((item) => item.id === topic.id && item.status === "hidden"));
+      const shown = await moderateForumTopic(db, moderator, topic.id, "show");
+      assert.equal(shown.status, "visible");
+      const [afterShow] = await tx.select({ topics: schema.forumCategories.topicCount, posts: schema.forumCategories.postCount })
+        .from(schema.forumCategories).where(eq(schema.forumCategories.id, category.id));
+      assert.deepEqual(afterShow, { topics: 1, posts: 3 });
+      await moderateForumTopic(db, moderator, topic.id, "unlock");
+      await moderateForumTopic(db, moderator, topic.id, "unpin");
+      const auditRows = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
+        .where(eq(schema.auditLogs.targetId, topic.id));
+      assert.equal(auditRows.filter((entry) => entry.action === "forum.topic.hide").length, 1);
+      for (const action of ["forum.topic.update", "forum.topic.pin", "forum.topic.lock", "forum.topic.show", "forum.topic.unlock", "forum.topic.unpin"]) {
+        assert.ok(auditRows.some((entry) => entry.action === action), action);
+      }
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

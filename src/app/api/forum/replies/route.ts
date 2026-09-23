@@ -13,7 +13,7 @@ export async function GET(request: Request): Promise<Response> {
     const topicId = params.get("topicId");
     if (!topicId) return jsonError(400, "bad_request", "Konu zorunlu.");
     const result = await listForumReplies(getDatabase().db, topicId, forumPage(params.get("page")));
-    return jsonOk(result, 200, { "Cache-Control": "public, max-age=15, stale-while-revalidate=30" });
+    return jsonOk(result, 200, { "Cache-Control": "no-store" });
   } catch (error) {
     return forumErrorResponse(error);
   }

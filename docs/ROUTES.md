@@ -45,15 +45,16 @@
 | `/forum/[category]`          | RSC    | public                     |
 | `/forum/topic/[slug]`        | RSC+API | public / `forum.reply.create` for replies |
 | `/forum/new`                 | RSC+API | `forum.topic.create`      |
-| `/forum/topic/[slug]/edit`   | RSC+CA | author or `forum.moderate` |
+| `/forum/topic/[slug]/edit`   | RSC+API | `forum.edit_own` owner or `forum.moderate` |
 | `/forum/topic/[slug]/reply`  | CA     | `forum.reply.create`       |
 | `/forum/topic/[slug]/report` | CA     | member                     |
 
 Implemented: category directory, category topic listing (paged), topic detail
-with visible replies, member topic creation and reply creation. Only enabled
-non-demo categories and visible non-demo topics/replies are public; writes
-require their server-side forum grants. Edits, reports and moderation routes
-remain in the next Phase 9 slices.
+with visible replies, member topic creation and reply creation, author edit,
+and moderator lock/pin/hide/reinstate actions. Only enabled non-demo categories
+and visible non-demo topics/replies are public; writes require their server-side
+forum grants. Reports, bans and further moderation routes remain in the next
+Phase 9 slices.
 
 ## Admin (`/admin`, `admin.*` permission + server-side check)
 
@@ -66,7 +67,7 @@ remain in the next Phase 9 slices.
 | `/admin/submissions`            | RSC+CA | `submission.review`         |
 | `/admin/users` (+ `[id]`)       | RSC+CA | `user.manage`               |
 | `/admin/roles`                  | RSC+CA | `role.manage`               |
-| `/admin/forum`                  | RSC+CA | `forum.moderate`            |
+| `/admin/forum`                  | RSC+API | `forum.moderate`           |
 | `/admin/moderation`             | RSC+CA | `moderation.access` (queue) |
 | `/admin/news` (+ `new`, `[id]`) | RSC+CA | `news.manage`               |
 | `/admin/ai-news`                | RSC+CA | `ai.manage`                 |
@@ -131,8 +132,9 @@ instead of a destructive row delete.
 | `/api/packs/[slug]/comments`          | GET/POST         | public/member   | visible paged read (clamped); limited write |
 | `/api/search`                         | GET              | public          | unified FTS                       |
 | `/api/forum/topics`                   | GET/POST         | public/`forum.topic.create` | visible paged topics / audited topic creation |
-| `/api/forum/topics/[id]`              | GET/PATCH/DELETE | public/member   | PATCH author/mod                  |
+| `/api/forum/topics/[id]`              | PATCH            | `forum.edit_own` owner / `forum.moderate` | update title/body (stable slug) |
 | `/api/forum/replies`                  | GET/POST         | public/`forum.reply.create` | visible paged replies / audited create |
+| `/api/admin/forum/topics/[id]`        | PATCH            | `forum.moderate` | lock/unlock, pin/unpin, hide/show |
 | `/api/notifications`                  | GET/PATCH        | member          |                                   |
 | `/api/installer/manifest/[packageId]` | GET              | public          | signed manifest                   |
 | `/api/installer/report`               | POST             | installer token | install telemetry (opt-in)        |

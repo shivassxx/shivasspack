@@ -2,7 +2,7 @@ import { and, asc, count, desc, eq, sql } from "drizzle-orm";
 import type { Database } from "@/db/connection";
 import * as s from "@/db/schema";
 import { isSafeSlug, slugify } from "@/lib/utils";
-import { assertActive, requirePermission, type Actor } from "@/services/rbac";
+import { assertActive, AuthorizationError, requirePermission, type Actor } from "@/services/rbac";
 
 const PAGE_SIZE = 20;
 
@@ -79,7 +79,8 @@ export async function listForumTopics(db: Database, input: { categorySlug?: stri
 
 export async function getForumTopic(db: Database, slug: string) {
   if (!isSafeSlug(slug)) return null;
-  const [topic] = await db.select({ ...topicListSelection, body: s.forumTopics.body }).from(s.forumTopics)
+  const [topic] = await db.select({ ...topicListSelection, body: s.forumTopics.body,
+    authorId: s.forumTopics.authorId }).from(s.forumTopics)
     .innerJoin(s.forumCategories, eq(s.forumCategories.id, s.forumTopics.categoryId))
     .innerJoin(s.users, eq(s.users.id, s.forumTopics.authorId))
     .where(and(eq(s.forumTopics.slug, slug), eq(s.forumTopics.status, "visible"),
@@ -185,5 +186,106 @@ export async function createForumReply(db: Database, actor: Actor, input: { topi
       targetId: created.id, after: { topicId: topic.id },
     });
     return created;
+  });
+}
+
+export async function updateForumTopic(db: Database, actor: Actor, id: string,
+  input: { title?: unknown; body?: unknown }) {
+  assertActive(actor);
+  const patch: { title?: string; body?: string } = {};
+  if (input.title !== undefined) {
+    const title = typeof input.title === "string" ? input.title.trim() : "";
+    if (title.length < 8 || title.length > 160) throw new ForumError("validation", "Konu başlığı 8-160 karakter olmalı.", 400);
+    patch.title = title;
+  }
+  if (input.body !== undefined) {
+    const body = typeof input.body === "string" ? input.body.trim().replace(/\r\n/g, "\n") : "";
+    if (body.length < 20 || body.length > 10_000) throw new ForumError("validation", "Konu metni 20-10000 karakter olmalı.", 400);
+    patch.body = body;
+  }
+  if (!Object.keys(patch).length) throw new ForumError("validation", "Düzenlenecek alan yok.", 400);
+  return db.transaction(async (tx) => {
+    const [before] = await tx.select({ id: s.forumTopics.id, slug: s.forumTopics.slug,
+      categoryId: s.forumTopics.categoryId, authorId: s.forumTopics.authorId,
+      status: s.forumTopics.status, isLocked: s.forumTopics.isLocked })
+      .from(s.forumTopics).where(and(eq(s.forumTopics.id, id), eq(s.forumTopics.isDemo, false))).for("update");
+    if (!before) throw new ForumError("not_found", "Konu bulunamadı.", 404);
+    const moderator = actor.permissions.has("forum.moderate");
+    if (!moderator && (actor.id !== before.authorId || !actor.permissions.has("forum.edit_own"))) {
+      throw new AuthorizationError("Bu konuyu düzenleme iznin yok.");
+    }
+    if (before.status !== "visible" || (before.isLocked && !moderator)) {
+      throw new ForumError("conflict", "Kilitli veya gizli konu düzenlenemez.", 409);
+    }
+    const [category] = await tx.select({ id: s.forumCategories.id }).from(s.forumCategories)
+      .where(and(eq(s.forumCategories.id, before.categoryId), visibleCategory())).limit(1);
+    if (!category) throw new ForumError("not_found", "Konu bulunamadı.", 404);
+    const [updated] = await tx.update(s.forumTopics).set(patch).where(eq(s.forumTopics.id, before.id))
+      .returning({ slug: s.forumTopics.slug, title: s.forumTopics.title, body: s.forumTopics.body });
+    if (!updated) throw new Error("Forum topic update returned no row.");
+    await tx.insert(s.auditLogs).values({ actorId: actor.id, action: "forum.topic.update",
+      targetType: "forum_topic", targetId: before.id, after: { fields: Object.keys(patch) } });
+    return updated;
+  });
+}
+
+export type ForumModerationAction = "lock" | "unlock" | "pin" | "unpin" | "hide" | "show";
+export function isForumModerationAction(value: unknown): value is ForumModerationAction {
+  return value === "lock" || value === "unlock" || value === "pin" || value === "unpin" ||
+    value === "hide" || value === "show";
+}
+
+export async function listForumModeration(db: Database, actor: Actor) {
+  assertActive(actor);
+  requirePermission(actor, "forum.moderate");
+  return db.select({ id: s.forumTopics.id, slug: s.forumTopics.slug, title: s.forumTopics.title,
+    status: s.forumTopics.status, isLocked: s.forumTopics.isLocked, isPinned: s.forumTopics.isPinned,
+    categoryName: s.forumCategories.name, authorName: s.users.displayName,
+    updatedAt: s.forumTopics.updatedAt,
+  }).from(s.forumTopics).innerJoin(s.forumCategories, eq(s.forumCategories.id, s.forumTopics.categoryId))
+    .innerJoin(s.users, eq(s.users.id, s.forumTopics.authorId))
+    .where(and(eq(s.forumTopics.isDemo, false), eq(s.forumCategories.isDemo, false),
+      sql`${s.forumTopics.status} in ('visible', 'hidden')`))
+    .orderBy(desc(s.forumTopics.updatedAt), desc(s.forumTopics.id)).limit(100);
+}
+
+export async function moderateForumTopic(db: Database, actor: Actor, id: string, action: ForumModerationAction) {
+  assertActive(actor);
+  requirePermission(actor, "forum.moderate");
+  if (!isForumModerationAction(action)) throw new ForumError("validation", "Geçersiz işlem.", 400);
+  return db.transaction(async (tx) => {
+    const [before] = await tx.select().from(s.forumTopics)
+      .where(and(eq(s.forumTopics.id, id), eq(s.forumTopics.isDemo, false))).for("update");
+    if (!before || before.status === "deleted") throw new ForumError("not_found", "Konu bulunamadı.", 404);
+    const next = {
+      isLocked: action === "lock" ? true : action === "unlock" ? false : before.isLocked,
+      isPinned: action === "pin" ? true : action === "unpin" ? false : before.isPinned,
+      status: action === "hide" ? "hidden" as const : action === "show" ? "visible" as const : before.status,
+    };
+    if (next.status === before.status && next.isLocked === before.isLocked && next.isPinned === before.isPinned) {
+      return { ...next, id: before.id, slug: before.slug };
+    }
+    if (next.status !== before.status) {
+      const [category] = await tx.select({ id: s.forumCategories.id }).from(s.forumCategories)
+        .where(eq(s.forumCategories.id, before.categoryId)).for("update");
+      if (!category) throw new ForumError("not_found", "Kategori bulunamadı.", 404);
+      const [replies] = await tx.select({ value: count() }).from(s.forumReplies)
+        .where(and(eq(s.forumReplies.topicId, before.id), eq(s.forumReplies.isDemo, false)));
+      const delta = next.status === "visible" ? 1 : -1;
+      const posts = 1 + Number(replies?.value ?? 0);
+      await tx.update(s.forumCategories).set({
+        topicCount: sql`${s.forumCategories.topicCount} + ${delta}`,
+        postCount: sql`${s.forumCategories.postCount} + ${delta * posts}`,
+      }).where(eq(s.forumCategories.id, category.id));
+    }
+    const [updated] = await tx.update(s.forumTopics).set(next).where(eq(s.forumTopics.id, before.id))
+      .returning({ id: s.forumTopics.id, slug: s.forumTopics.slug, status: s.forumTopics.status,
+        isLocked: s.forumTopics.isLocked, isPinned: s.forumTopics.isPinned });
+    if (!updated) throw new Error("Forum moderation update returned no row.");
+    await tx.insert(s.auditLogs).values({ actorId: actor.id, action: `forum.topic.${action}`,
+      targetType: "forum_topic", targetId: before.id,
+      before: { status: before.status, isLocked: before.isLocked, isPinned: before.isPinned },
+      after: { status: updated.status, isLocked: updated.isLocked, isPinned: updated.isPinned } });
+    return updated;
   });
 }

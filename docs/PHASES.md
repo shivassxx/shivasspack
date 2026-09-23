@@ -512,3 +512,19 @@ locks, counters, audit and category closure). Standalone HTTP verified guest
 reads/401 writes, member reply form and POST, visible list/detail, 400 invalid
 body, 404 unknown topic, 409 locked topic, hidden-reply exclusion and complete
 fixture cleanup; external health remains available on port 3000.
+
+The next forum slice adds `/forum/topic/[slug]/edit` (author with
+`forum.edit_own`, or moderator) and `/admin/forum` topic controls. Topic title
+and body changes keep the canonical slug stable. A moderator can lock/unlock,
+pin/unpin and hide/show a real topic via `PATCH
+/api/admin/forum/topics/[id]`; hidden topics remain visible to the moderation
+list but not public readers. Changes lock the topic row, keep the category's
+topic/post counters consistent on hide/show, including replies already counted
+but subsequently hidden, and write one audit entry
+per actual mutation. Locked topics cannot be edited by authors or replied to;
+no-op moderator actions do not double-count or add audit entries. Permission,
+ownership, validation and counter invariants are covered by 36 PostgreSQL tests.
+Production build and standalone HTTP verified author edit, moderator permissions,
+lock, pin, hide/show, public 404 and reinstatement, counter restoration, audit
+idempotence and complete fixture cleanup. Forum API reads use `no-store` so
+moderation changes are visible immediately.
