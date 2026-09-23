@@ -232,6 +232,19 @@ export async function listSubmissions(db: Database, actor: Actor): Promise<Submi
   }));
 }
 
+/** The version picker only needs `pack.edit_own`, not submission creation. */
+export async function listVersionablePacks(db: Database, actor: Actor) {
+  const actorId = gate(actor, "pack.edit_own");
+  return db.select({
+    id: s.packs.id,
+    slug: s.packs.slug,
+    title: s.packs.title,
+    publishedAt: s.packs.publishedAt,
+  }).from(s.packs)
+    .where(and(eq(s.packs.creatorId, actorId), eq(s.packs.status, "approved"), eq(s.packs.isDemo, false)))
+    .orderBy(desc(s.packs.updatedAt), desc(s.packs.id));
+}
+
 async function loadOwn(db: Database, actorId: string, id: string) {
   const [row] = await db
     .select()
@@ -355,6 +368,44 @@ export async function transitionSubmission(
   throw new SubmissionError("validation", "Geçersiz durum geçişi.", 400);
 }
 
+/** Save a reviewed author's changes and return the pack to the queue atomically. */
+export async function reviseAndResubmit(db: Database, actor: Actor, id: string, input: SubmissionInput) {
+  const actorId = gate(actor, "pack.edit_own");
+  requirePermission(actor, "pack.submit");
+  const patch = parseFields(input);
+  if (patch.title === undefined || patch.excerpt === undefined || patch.description === undefined ||
+      input.categoryId === undefined || input.tagIds === undefined) {
+    throw new SubmissionError("validation", "Başlık, özet, açıklama, kategori ve etiket listesi zorunlu.", 400);
+  }
+  const requestedTags = normalizeTagIds(input.tagIds);
+  return db.transaction(async (tx) => {
+    const [before] = await tx.select().from(s.packs)
+      .where(and(eq(s.packs.id, id), eq(s.packs.creatorId, actorId), eq(s.packs.isDemo, false)))
+      .for("update");
+    if (!before) throw new SubmissionError("not_found", "Gönderi bulunamadı.", 404);
+    if (before.status !== "changes_requested" && before.status !== "rejected") {
+      throw new SubmissionError("conflict", "Yalnızca değişiklik istenen veya reddedilen gönderi yeniden düzenlenebilir.", 409);
+    }
+    const categoryId = await ensureCategory(tx as unknown as Database, input.categoryId);
+    const tagIds = await ensureTags(tx as unknown as Database, requestedTags);
+    const [updated] = await tx.update(s.packs)
+      .set({ ...patch, categoryId, status: "pending", reviewNote: null })
+      .where(eq(s.packs.id, before.id)).returning();
+    if (!updated) throw new Error("Resubmission update returned no row.");
+    await tx.delete(s.packTags).where(eq(s.packTags.packId, before.id));
+    if (tagIds.length) await tx.insert(s.packTags).values(tagIds.map((tagId) => ({ packId: before.id, tagId })));
+    await tx.insert(s.auditLogs).values({
+      actorId,
+      action: "submission.resubmit",
+      targetType: "pack",
+      targetId: before.id,
+      before: { status: before.status },
+      after: { status: "pending", fields: [...Object.keys(patch), "categoryId", "tagIds"] },
+    });
+    return { ...toSummary(updated), ...detailFields(updated), tagIds };
+  });
+}
+
 export async function reviewSubmission(
   db: Database,
   actor: Actor,
@@ -412,18 +463,17 @@ export async function reviewSubmission(
  */
 export async function createPackVersion(db: Database, actor: Actor, packId: string, input: PackVersionInput): Promise<PackVersionSummary> {
   const actorId = gate(actor, "pack.edit_own");
-  const [pack] = await db
-    .select({ id: s.packs.id, slug: s.packs.slug, status: s.packs.status })
-    .from(s.packs)
-    .where(and(eq(s.packs.id, packId), eq(s.packs.creatorId, actorId), eq(s.packs.isDemo, false)))
-    .limit(1);
-  if (!pack) throw new SubmissionError("not_found", "Gönderi bulunamadı.", 404);
-  if (pack.status !== "approved") {
-    throw new SubmissionError("conflict", "Yeni sürüm yalnızca yayındaki paketlere eklenebilir.", 409);
-  }
-  const values = validatePackVersion(input);
   try {
     return await db.transaction(async (tx) => {
+      const [pack] = await tx.select({ id: s.packs.id, slug: s.packs.slug, status: s.packs.status })
+        .from(s.packs)
+        .where(and(eq(s.packs.id, packId), eq(s.packs.creatorId, actorId), eq(s.packs.isDemo, false)))
+        .for("update");
+      if (!pack) throw new SubmissionError("not_found", "Gönderi bulunamadı.", 404);
+      if (pack.status !== "approved") {
+        throw new SubmissionError("conflict", "Yeni sürüm yalnızca yayındaki paketlere eklenebilir.", 409);
+      }
+      const values = validatePackVersion(input);
       await tx.update(s.packVersions).set({ isLatest: false }).where(eq(s.packVersions.packId, pack.id));
       const [created] = await tx.insert(s.packVersions).values({
         packId: pack.id,

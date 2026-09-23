@@ -1,6 +1,6 @@
 import { getDatabase } from "@/db/client";
 import { adminErrorResponse } from "@/lib/admin-api";
-import { jsonError, jsonOk, readJsonBody } from "@/lib/api";
+import { jsonError, jsonOk, MAX_SUBMISSION_BODY_BYTES, readJsonBody } from "@/lib/api";
 import { resolveRequestSession } from "@/lib/request-auth";
 import { updateSubmission, type SubmissionInput } from "@/services/submissions";
 
@@ -16,7 +16,7 @@ export async function PATCH(
     const session = await resolveRequestSession(db, request);
     if (!session) return jsonError(401, "unauthenticated", "Giriş yapmanız gerekiyor.");
     const { id } = await context.params;
-    const body = await readJsonBody<SubmissionInput>(request);
+    const body = await readJsonBody<SubmissionInput>(request, MAX_SUBMISSION_BODY_BYTES);
     if (!body) return jsonError(400, "bad_request", "Geçersiz istek.");
     return jsonOk({ submission: await updateSubmission(db, session.actor, id, body) }, 200, { "Cache-Control": "no-store" });
   } catch (error) {

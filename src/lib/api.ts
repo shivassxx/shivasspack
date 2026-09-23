@@ -4,6 +4,7 @@ import { AuthError } from "@/services/auth/service";
 import { AuthorizationError } from "@/services/rbac";
 
 const MAX_BODY_BYTES = 16 * 1024;
+export const MAX_SUBMISSION_BODY_BYTES = 256 * 1024;
 
 export type ApiErrorBody = { error: { code: string; message: string } };
 
@@ -52,12 +53,12 @@ export function getUserAgent(request: Request): string | null {
  * Gövdeyi sınırlı boyutta okur ve ayrıştırır.
  * Aşım veya geçersiz JSON → `null`; çağıran 400 döner.
  */
-export async function readJsonBody<T>(request: Request): Promise<Partial<T> | null> {
+export async function readJsonBody<T>(request: Request, maxBytes = MAX_BODY_BYTES): Promise<Partial<T> | null> {
   const declared = Number(request.headers.get("content-length") ?? "0");
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return null;
+  if (Number.isFinite(declared) && declared > maxBytes) return null;
   try {
     const text = await request.text();
-    if (text.length > MAX_BODY_BYTES) return null;
+    if (new TextEncoder().encode(text).byteLength > maxBytes) return null;
     const parsed: unknown = JSON.parse(text);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     return parsed as Partial<T>;

@@ -32,10 +32,11 @@ function toFormValues(item: SubmissionDetail): SubmissionFormValues {
   };
 }
 
-export function SubmissionList({ items, categories, tags }: {
+export function SubmissionList({ items, categories, tags, canEdit }: {
   items: SubmissionDetail[];
   categories: Option[];
   tags: Option[];
+  canEdit: boolean;
 }) {
   const router = useRouter();
   const [openId, setOpenId] = useState<string | null>(null);
@@ -46,15 +47,9 @@ export function SubmissionList({ items, categories, tags }: {
     if (!form) return;
     setPending(true);
     try {
-      const save = await requestJson(`/api/submissions/${item.id}`, { method: "PATCH", body: readForm(form) });
-      if (!save.ok) {
-        toast.error(save.message);
-        return;
-      }
-      const send = await requestJson(`/api/submissions/${item.id}/status`, { method: "POST", body: { action: "submit" } });
+      const send = await requestJson(`/api/submissions/${item.id}/resubmit`, { method: "POST", body: readForm(form) });
       if (!send.ok) {
         toast.error(send.message);
-        router.refresh();
         return;
       }
       toast.success("İncelemeye yeniden gönderildi.");
@@ -68,7 +63,7 @@ export function SubmissionList({ items, categories, tags }: {
   return (
     <ul className="mt-4 space-y-3">
       {items.map((item) => {
-        const resubmittable = resubmittableStatuses.has(item.status);
+        const resubmittable = canEdit && resubmittableStatuses.has(item.status);
         const open = resubmittable && openId === item.id;
         return (
           <li key={item.id} className="rounded-xl border border-line bg-surface-900 p-4">

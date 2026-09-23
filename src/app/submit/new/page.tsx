@@ -8,7 +8,7 @@ import { getCurrentSession } from "@/lib/auth-context";
 import { submissionStatusClass, submissionStatusLabels } from "@/lib/submission-state";
 import { formatDate } from "@/lib/utils";
 import { assertActive } from "@/services/rbac";
-import { listSubmissions } from "@/services/submissions";
+import { listVersionablePacks } from "@/services/submissions";
 
 export const metadata: Metadata = { title: "Yeni sürüm ekle", robots: { index: false, follow: false } };
 
@@ -27,8 +27,7 @@ export default async function NewVersionPage({ searchParams }: { searchParams: P
   }
   const { pack } = await searchParams;
   const db = getDatabase().db;
-  const submissions = await listSubmissions(db, session.actor);
-  const approved = submissions.filter((item) => item.status === "approved");
+  const approved = await listVersionablePacks(db, session.actor);
   if (approved.length === 0) {
     return (
       <PageState
@@ -69,8 +68,8 @@ export default async function NewVersionPage({ searchParams }: { searchParams: P
                 <Link href={`/packs/${item.slug}`} className="truncate font-medium text-white hover:text-accent-300">
                   {item.title}
                 </Link>
-                <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${submissionStatusClass[item.status] ?? submissionStatusClass.draft}`}>
-                  {submissionStatusLabels[item.status] ?? item.status}
+                <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${submissionStatusClass.approved}`}>
+                  {submissionStatusLabels.approved}
                 </span>
               </div>
               <p className="mt-2 text-xs text-zinc-500">

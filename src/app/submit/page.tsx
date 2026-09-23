@@ -36,7 +36,8 @@ export default async function SubmitPage() {
       <section aria-labelledby="my-submissions" className="mt-9">
         <h2 id="my-submissions" className="text-xl font-semibold text-white">Gönderi listem</h2>
         {submissions.length ? (
-          <SubmissionList items={submissions} categories={options.categories} tags={options.tags} />
+          <SubmissionList items={submissions} categories={options.categories} tags={options.tags}
+            canEdit={session.actor.permissions.has("pack.edit_own")} />
         ) : (
           <div className="mt-4 rounded-xl border border-line bg-surface-900 p-6 text-sm text-zinc-400">
             Henüz bir gönderin yok. Yukarıdaki formdan ilk taslağını oluştur.

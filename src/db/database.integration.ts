@@ -50,6 +50,8 @@ import {
   listSubmissionOptions,
   listSubmissionQueue,
   listSubmissions,
+  listVersionablePacks,
+  reviseAndResubmit,
   reviewSubmission,
   transitionSubmission,
   updateSubmission,
@@ -1399,7 +1401,30 @@ test("submission flow creates drafts, gates transitions and audits review decisi
       assert.equal(rejected.reviewNote, "Ekran gorseli eksik.");
       assert.equal(await getPublishedPack(db, created.slug), null, "rejected stays hidden");
 
-      // Authors may edit rejections; resubmitting clears the previous note.
+      // The list's edit-and-resend action must be atomic, even on invalid fields.
+      const revision = { title: `Flow Pack ${suffix} Refined`, excerpt: "Updated summary in one action",
+        description: "Revised description after review feedback.", categoryId: category.id, tagIds: [tag.id] };
+      await assert.rejects(reviseAndResubmit(db, authorActor, created.id,
+        { ...revision, categoryId: hiddenCategory.id }), /kapalı kategori/);
+      await assert.rejects(reviseAndResubmit(db, authorActor, created.id,
+        { ...revision, excerpt: "short" }), /Özet/);
+      await assert.rejects(reviseAndResubmit(db, noSubmitActor, created.id, revision), /pack\.edit_own/);
+      await assert.rejects(reviseAndResubmit(db, otherActor, created.id, revision), /bulunamadı/);
+      const unchanged = await getOwnSubmission(db, authorActor, created.id);
+      assert.equal(unchanged.status, "rejected");
+      assert.equal(unchanged.reviewNote, "Ekran gorseli eksik.");
+      assert.equal(unchanged.excerpt, "A fine summary line");
+      const revised = await reviseAndResubmit(db, authorActor, created.id, revision);
+      assert.equal(revised.status, "pending");
+      assert.equal(revised.reviewNote, null);
+      assert.equal(revised.excerpt, revision.excerpt);
+      assert.deepEqual(revised.tagIds, [tag.id]);
+      assert.ok((await listSubmissionQueue(db, reviewerActor)).some((item) => item.id === created.id));
+      await assert.rejects(reviseAndResubmit(db, authorActor, created.id, revision), /Yalnızca değişiklik istenen/);
+      const requested = await reviewSubmission(db, reviewerActor, created.id, "changes_requested", "Yeni düzeltme gerekli.");
+      assert.equal(requested.status, "changes_requested");
+
+      // The existing detail-page save + submit flow also works for changes requested.
       await updateSubmission(db, authorActor, created.id, { excerpt: "Updated summary after feedback" });
       const resubmitted = await transitionSubmission(db, authorActor, created.id, "submit");
       assert.equal(resubmitted.status, "pending");
@@ -1430,9 +1455,10 @@ test("submission flow creates drafts, gates transitions and audits review decisi
       const audits = await tx.select({ action: schema.auditLogs.action })
         .from(schema.auditLogs).where(eq(schema.auditLogs.targetId, created.id));
       const actions = audits.map((row) => row.action);
-      for (const expected of ["submission.create", "submission.update", "submission.submit", "submission.withdraw", "submission.review"]) {
+      for (const expected of ["submission.create", "submission.update", "submission.submit", "submission.withdraw", "submission.review", "submission.resubmit"]) {
         assert.ok(actions.includes(expected), `audit ${expected}`);
       }
+      assert.equal(actions.filter((action) => action === "submission.resubmit").length, 1);
 
       // Form options expose enabled categories and non-demo tags only.
       const options = await listSubmissionOptions(db);
@@ -1476,12 +1502,15 @@ test("authors add versions to approved packs with a single moving latest", async
       const author: Actor = { id: users[0]!.id, displayName: "Author 1", roleKey: "member", status: "active", banUntil: null, permissions: authorPerms };
       const other: Actor = { id: users[1]!.id, displayName: "Author 2", roleKey: "member", status: "active", banUntil: null, permissions: authorPerms };
       const noEdit: Actor = { ...author, permissions: new Set<PermissionKey>(["pack.view", "pack.submit"]) };
+      const versionOnly: Actor = { ...author, permissions: new Set<PermissionKey>(["pack.edit_own"]) };
       const viewer: Actor = { id: null, displayName: null, roleKey: "custom", status: "active", banUntil: null,
         permissions: new Set<PermissionKey>(["pack.view", "download.use"]) };
 
       // Downloads expose no target until the first version exists.
       await assert.rejects(resolvePackDownload(db, viewer, mine.slug, { ip: "203.0.113.21", userAgent: "v1" }),
         /İndirme bağlantısı bulunamadı/);
+      assert.deepEqual((await listVersionablePacks(db, versionOnly)).map((item) => item.id), [mine.id]);
+      await assert.rejects(listVersionablePacks(db, noEdit), /pack\.edit_own/);
 
       // First version becomes the single latest; values are normalized on the way in.
       const v1 = await createPackVersion(db, author, mine.id, {

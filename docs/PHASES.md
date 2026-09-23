@@ -449,17 +449,28 @@ so the client can repopulate a form without a second fetch; the payload stays
 owner-scoped behind `pack.submit`. `/submit` moved its cards into a client
 `SubmissionList` component: `changes_requested` and `rejected` items gain a
 "Düzenle ve tekrar gönder" toggle that opens the shared field editor inline
-and runs the exact safe sequence — `PATCH /api/submissions/[id]` then
-`POST /api/submissions/[id]/status` with `action=submit` — collapsing on
-success and refreshing state, so a failed save keeps the review note intact
-while a successful one clears it and moves the row back to `pending`. Drafts
+and uses `POST /api/submissions/[id]/resubmit` to save and return to review
+atomically, collapsing on success and refreshing state. A failed save keeps
+the review note intact; success clears it and moves the row to `pending`. Drafts
 keep the link-only treatment; approved rows keep their public and version
 links. The unit suite stays at 112 tests; the PostgreSQL suite asserts the
 enriched list payload (detail fields and tag ids) inside the existing
 submission flow test. Standalone HTTP verified the affordance renders only
 for decision states (draft has none), the note banner and status chip on the
-card, the PATCH + resubmit round trip reflected in the API list as pending
+card, the edit-and-resubmit round trip reflected in the API list as pending
 with a cleared note and edited fields, the affordance disappearing once
-pending, the update/submit audit rows and the 409 on a duplicate submit;
+pending, the audit row and the 409 on a duplicate submit;
 temporary users, packs, categories and audit rows were removed, leaving zero
 residue.
+
+GPT-6 review (2026-09-23): corrected two author-path gaps. The version picker
+uses an approved-pack query gated by `pack.edit_own`; `listSubmissions` also
+requires `pack.submit` and broke for custom roles. Version insertion locks the
+owner-scoped pack inside the transaction before checking approval. The inline
+edit-and-resend endpoint locks the owner row and validates fields/references,
+updates fields and tags, clears the note, transitions to `pending` and inserts
+one `submission.resubmit` audit row in the same transaction. Invalid edits
+leave both fields and review decision untouched; the inline control is shown
+only when `pack.edit_own` is granted. Submission create/edit/resubmit JSON
+requests allow 256 KiB so the forms' supported 50,000-character descriptions
+can actually be saved; other API requests keep their 16 KiB cap.

@@ -33,7 +33,7 @@
 | `/bookmarks`         | RSC    | member        | saved packs                          |
 | `/downloads`         | RSC    | member        | personal download history            |
 | `/notifications`     | RSC+CA | member        | mark read                            |
-| `/submit`            | RSC+CA | `pack.submit` | create drafts + own list; inline edit-and-resend for decision states  |
+| `/submit`            | RSC+CA | `pack.submit` | create drafts + own list; inline edit-and-resend for decision states (also requires `pack.edit_own`) |
 | `/submit/[id]`       | RSC+CA | author        | edit while `draft/changes_requested/rejected`, review note, submit/withdraw |
 | `/submit/new`        | RSC+CA | `pack.edit_own` | new version for own approved pack (single moving latest + `pack.version_add` audit) |
 
@@ -99,6 +99,7 @@ instead of a destructive row delete.
 | `/api/submissions`                    | GET/POST         | `pack.submit`   | own list / create draft            |
 | `/api/submissions/[id]`               | PATCH            | `pack.edit_own` + owner | edit while author-editable  |
 | `/api/submissions/[id]/status`        | POST             | `pack.submit` + owner | `submit`/`withdraw` transitions |
+| `/api/submissions/[id]/resubmit`      | POST             | `pack.submit` + `pack.edit_own` + owner | atomically edit and resubmit reviewed pack |
 | `/api/submissions/[id]/versions`      | POST             | `pack.edit_own` + owner | add version to own approved pack |
 | `/api/packs`                          | GET              | public          | listing (filters, sort, page)     |
 | `/api/packs/[slug]`                   | GET              | public          | detail                            |
