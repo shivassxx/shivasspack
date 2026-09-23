@@ -1,0 +1,75 @@
+name: shivasspack
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://shivass_app:${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD after provisioning shivass_app}@db:5432/shivasspack
+      REDIS_URL: ${REDIS_URL:-}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      SESSION_SECRET: ${SESSION_SECRET:?Generate SESSION_SECRET in .env}
+      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-shivass_session}
+      SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
+      MAIL_TRANSPORT: ${MAIL_TRANSPORT:-none}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_OUTBOX_DIR: ${MAIL_OUTBOX_DIR:-/app/.mail}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+    volumes:
+      - mailoutbox:/app/.mail
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: shivass
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: shivasspack
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shivass -d shivasspack"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    profiles: ["redis"]
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  mailoutbox:

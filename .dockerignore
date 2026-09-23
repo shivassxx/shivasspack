@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+!.env.migrations.example
+.mail
+*.tsbuildinfo
+*.log
+coverage
+docs

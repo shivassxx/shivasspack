@@ -1,0 +1,25 @@
+node_modules/
+.next/
+out/
+build/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+.env
+.env.local
+.env.*.local
+.env.migrations
+
+# Local mail outbox created by MAIL_TRANSPORT=file
+.mail/
+
+.DS_Store
+*.log
+npm-debug.log*
+
+.vscode/
+.idea/
+
+# drizzle-kit output is committed only if you choose to track generated SQL
+# (we track migrations in /drizzle)
