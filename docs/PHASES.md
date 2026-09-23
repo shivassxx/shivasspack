@@ -365,3 +365,23 @@ Gallery screenshots stay deferred with the S3/file-upload phase. The unit
 suite is now 103 tests and the real PostgreSQL suite has 30, covering guide
 validation/clearing, permission gates, version demo exclusion and ordering,
 related-pack visibility and ordering, and the DB length check.
+
+## Phase 8 checkpoint (profiles/submissions, in progress)
+
+Public profiles are live at `/u/[username]`. `getPublicProfile` accepts only
+active, non-demo members whose username matches the DB format and returns the
+display name, bio, join date and a count of currently visible packs;
+suspended, deleted, demo, unknown or malformed names render a true 404. The
+page adds canonical/Open Graph metadata and a script-safe ProfilePage JSON-LD
+block, then lists the member's packs through a new validated `creatorId`
+filter on the shared public query, so drafts, disabled categories and other
+members' packs never appear; out-of-range pages return no rows and the
+pagination links stay on `/u/[username]?page=`. The pack detail byline and
+every pack card now link to the author's profile. Unit coverage is 104 tests
+(a serializer escaping case) and the real PostgreSQL suite has 31 tests
+covering identity visibility, pack visibility, totals, unknown creators,
+out-of-range pages and malformed usernames. Standalone HTTP confirmed the
+header/bio, visible-only listing, JSON-LD and canonical URL,
+suspended/unknown/malformed 404s and the byline/card links; temporary users,
+packs and categories were removed, leaving zero residue. The submission
+wizard and `/admin/submissions` review queue remain open in this phase.

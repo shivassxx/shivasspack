@@ -1,3 +1,8 @@
+/** JSON-LD payload that can never close its `<script>` element. */
+export function serializeJsonLd(data: unknown): string {
+  return JSON.stringify(data).replace(/</g, "\\u003c");
+}
+
 export type PackJsonLdInput = {
   siteUrl: string;
   slug: string;
@@ -44,5 +49,5 @@ export function buildPackJsonLd(input: PackJsonLdInput): string {
       worstRating: "1",
     };
   }
-  return JSON.stringify(data).replace(/</g, "\\u003c");
+  return serializeJsonLd(data);
 }

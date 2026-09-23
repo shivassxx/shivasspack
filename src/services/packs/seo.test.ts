@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPackJsonLd } from "./seo";
+import { buildPackJsonLd, serializeJsonLd } from "./seo";
 
 const base = {
   siteUrl: "https://example.com",
@@ -37,5 +37,11 @@ describe("pack JSON-LD", () => {
     expect(parsed.name).toBe("</script><img src=x>");
     expect(parsed).not.toHaveProperty("aggregateRating");
     expect(parsed).not.toHaveProperty("softwareVersion");
+  });
+
+  it("serializeJsonLd keeps arbitrary payloads parseable and script-safe", () => {
+    const html = serializeJsonLd({ "@type": "ProfilePage", note: "</script><b>x</b>" });
+    expect(html).not.toContain("<");
+    expect(JSON.parse(html)).toEqual({ "@type": "ProfilePage", note: "</script><b>x</b>" });
   });
 });

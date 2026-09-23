@@ -22,6 +22,7 @@ export type PackKind = (typeof s.packKind.enumValues)[number];
 export type PublicPackFilters = {
   q?: string;
   category?: string;
+  creatorId?: string;
   known?: boolean;
   featured?: boolean;
   sort?: PackSort;
@@ -61,7 +62,10 @@ export type PackListResult = {
   page: number;
   pageSize: number;
   pageCount: number;
-  filters: Required<Pick<PublicPackFilters, "q" | "known" | "sort">> & { category?: string };
+  filters: Required<Pick<PublicPackFilters, "q" | "known" | "sort">> & {
+    category?: string;
+    creatorId?: string;
+  };
 };
 
 export type PublicCategory = {
@@ -104,12 +108,16 @@ export type PackDetail = PackListItem & {
 function normalizeFilters(filters: PublicPackFilters) {
   const q = typeof filters.q === "string" ? filters.q.trim().replace(/\s+/g, " ").slice(0, 80) : "";
   const category = isSafeSlug(filters.category) ? filters.category : undefined;
+  const creatorId =
+    typeof filters.creatorId === "string" && filters.creatorId.length > 0 && filters.creatorId.length <= 64
+      ? filters.creatorId
+      : undefined;
   const sort = packSortValues.includes(filters.sort as PackSort) ? filters.sort! : "newest";
   const page = Number.isInteger(filters.page) ? Math.min(1000, Math.max(1, filters.page!)) : 1;
   const pageSize = Number.isInteger(filters.pageSize)
     ? Math.min(48, Math.max(1, filters.pageSize!))
     : PACK_PAGE_SIZE;
-  return { q, category, known: filters.known === true, featured: filters.featured === true, sort, page, pageSize };
+  return { q, category, creatorId, known: filters.known === true, featured: filters.featured === true, sort, page, pageSize };
 }
 
 function publicConditions(now: Date, filters: ReturnType<typeof normalizeFilters>): SQL[] {
@@ -120,6 +128,7 @@ function publicConditions(now: Date, filters: ReturnType<typeof normalizeFilters
     lte(s.packs.publishedAt, now),
   ];
   if (filters.category) conditions.push(eq(s.packCategories.slug, filters.category));
+  if (filters.creatorId) conditions.push(eq(s.packs.creatorId, filters.creatorId));
   if (filters.known) conditions.push(eq(s.packs.isKnown, true));
   if (filters.featured) conditions.push(eq(s.packs.featured, true));
   if (filters.q) {
@@ -223,7 +232,13 @@ export async function listPublishedPacks(db: Database, input: PublicPackFilters 
     page: filters.page,
     pageSize: filters.pageSize,
     pageCount: Math.max(1, Math.ceil(total / filters.pageSize)),
-    filters: { q: filters.q, category: filters.category, known: filters.known, sort: filters.sort },
+    filters: {
+      q: filters.q,
+      category: filters.category,
+      creatorId: filters.creatorId,
+      known: filters.known,
+      sort: filters.sort,
+    },
   };
 }
 
@@ -377,4 +392,54 @@ export async function getRelatedPacks(
     publishedAt: item.publishedAt!,
     tags: tagsByPack.get(item.id) ?? [],
   }));
+}
+
+export type PublicProfile = {
+  id: string;
+  username: string;
+  displayName: string;
+  bio: string | null;
+  createdAt: Date;
+  packCount: number;
+};
+
+/** Same format as the DB `users_username_format` check. */
+export function isProfileUsername(value: string): boolean {
+  return /^[a-z0-9][a-z0-9_-]{2,31}$/.test(value);
+}
+
+/** Active, non-demo member with their count of currently visible packs. */
+export async function getPublicProfile(db: Database, username: string): Promise<PublicProfile | null> {
+  if (!isProfileUsername(username)) return null;
+  const [row] = await db
+    .select({
+      id: s.users.id,
+      username: s.users.username,
+      displayName: s.users.displayName,
+      bio: s.users.bio,
+      createdAt: s.users.createdAt,
+      status: s.users.status,
+      isDemo: s.users.isDemo,
+    })
+    .from(s.users)
+    .where(eq(s.users.username, username))
+    .limit(1);
+  if (!row || row.status !== "active" || row.isDemo) return null;
+  const where = and(
+    ...publicConditions(new Date(), normalizeFilters({})),
+    eq(s.packs.creatorId, row.id),
+  );
+  const [stats] = await db
+    .select({ value: count() })
+    .from(s.packs)
+    .innerJoin(s.packCategories, eq(s.packCategories.id, s.packs.categoryId))
+    .where(where);
+  return {
+    id: row.id,
+    username: row.username,
+    displayName: row.displayName,
+    bio: row.bio,
+    createdAt: row.createdAt,
+    packCount: Number(stats?.value ?? 0),
+  };
 }

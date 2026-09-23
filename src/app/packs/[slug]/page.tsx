@@ -110,7 +110,7 @@ export default async function PackDetailPage({ params, searchParams }: {
           <h1 className="mt-4 text-3xl font-bold tracking-tight text-white sm:text-5xl">{pack.title}</h1>
           <p className="mt-4 max-w-3xl text-base leading-7 text-zinc-400">{pack.excerpt}</p>
           <p className="mt-4 text-sm text-zinc-500">
-            <span className="text-zinc-300">{pack.creatorName}</span> (@{pack.creatorUsername})
+            <span className="text-zinc-300"><Link href={`/u/${pack.creatorUsername}`} className="hover:text-accent-400">{pack.creatorName}</Link></span> (@{pack.creatorUsername})
             <span aria-hidden> · </span>{formatDate(pack.publishedAt)}
           </p>
           {pack.tags.length > 0 ? (

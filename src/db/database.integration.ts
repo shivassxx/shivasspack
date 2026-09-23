@@ -21,6 +21,7 @@ import { hashToken } from "../services/auth/token";
 import { can, type Actor, type PermissionKey } from "../services/rbac";
 import { consumeRateLimit } from "../services/rate-limit";
 import {
+  getPublicProfile,
   getPublishedPack,
   getRelatedPacks,
   listPublicCategories,
@@ -1199,6 +1200,79 @@ test("detail exposes install guide, ordered version history and related packs", 
       await assert.rejects(tx.insert(schema.packs).values({ slug: `detail-short-${suffix}`, title: "Short Guide",
         excerpt: "Guide check", description: "Pack with an invalid install guide value.", categoryId: category.id,
         creatorId: user.id, status: "draft", installGuide: "abcde" }));
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("public profiles expose active members and only their visible packs", async () => {
+  const rollback = new Error("ROLLBACK_PUBLIC_PROFILE_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const identity = (username: string, displayName: string) => ({
+        username, displayName, email: `${username}@example.invalid`, roleId: role.id,
+      });
+      const bio = "FiveM gorsel paketleri uretiyorum.";
+      const [author] = await tx.insert(schema.users)
+        .values({ ...identity(`prof-${suffix}`, "Profile Author"), bio })
+        .returning({ id: schema.users.id });
+      const [other] = await tx.insert(schema.users)
+        .values(identity(`prof-other-${suffix}`, "Other Author"))
+        .returning({ id: schema.users.id });
+      const [suspended] = await tx.insert(schema.users)
+        .values({ ...identity(`prof-sus-${suffix}`, "Suspended User"), status: "suspended" })
+        .returning({ id: schema.users.id });
+      const [demoUser] = await tx.insert(schema.users)
+        .values({ ...identity(`prof-demo-${suffix}`, "Demo User"), isDemo: true })
+        .returning({ id: schema.users.id });
+      assert.ok(author && other && suspended && demoUser);
+      const [category] = await tx.insert(schema.packCategories)
+        .values({ slug: `prof-${suffix}`, name: "Profile Category", kind: "graphics" })
+        .returning({ id: schema.packCategories.id });
+      const [hiddenCategory] = await tx.insert(schema.packCategories)
+        .values({ slug: `prof-hidden-${suffix}`, name: "Hidden Category", kind: "pvp", enabled: false })
+        .returning({ id: schema.packCategories.id });
+      assert.ok(category && hiddenCategory);
+      const stamp = new Date(Date.now() - 60000);
+      const [visible, draftPack, hiddenPack, otherPack] = await tx.insert(schema.packs).values([
+        { slug: `prof-visible-${suffix}`, title: "Visible Author Pack", excerpt: "Visible author pack",
+          description: "Approved pack shown on the profile.", categoryId: category.id, creatorId: author.id,
+          status: "approved", publishedAt: stamp },
+        { slug: `prof-draft-${suffix}`, title: "Draft Author Pack", excerpt: "Draft author pack",
+          description: "Draft pack stays off the profile.", categoryId: category.id, creatorId: author.id,
+          status: "draft", publishedAt: null },
+        { slug: `prof-hidpkg-${suffix}`, title: "Hidden Category Pack", excerpt: "Hidden category pack",
+          description: "Approved pack in a disabled category.", categoryId: hiddenCategory.id,
+          creatorId: author.id, status: "approved", publishedAt: stamp },
+        { slug: `prof-otherpkg-${suffix}`, title: "Other Author Pack", excerpt: "Other author pack",
+          description: "Approved pack by somebody else.", categoryId: category.id, creatorId: other.id,
+          status: "approved", publishedAt: stamp },
+      ]).returning({ id: schema.packs.id, slug: schema.packs.slug });
+      assert.ok(visible && draftPack && hiddenPack && otherPack);
+
+      const profile = await getPublicProfile(db, `prof-${suffix}`);
+      assert.ok(profile);
+      assert.equal(profile.displayName, "Profile Author");
+      assert.equal(profile.bio, bio);
+      assert.equal(profile.packCount, 1);
+
+      const list = await listPublishedPacks(db, { creatorId: profile.id, pageSize: 48 });
+      assert.deepEqual(list.items.map((item) => item.slug), [visible.slug]);
+      assert.equal(list.total, profile.packCount);
+      assert.ok(!list.items.some((item) => [draftPack.slug, hiddenPack.slug, otherPack.slug].includes(item.slug)));
+      // Pages past the end return no rows; unknown creators return nothing.
+      assert.equal((await listPublishedPacks(db, { creatorId: profile.id, page: 99 })).items.length, 0);
+      assert.equal((await listPublishedPacks(db, { creatorId: "usr_nobody" })).total, 0);
+
+      // Suspended, demo, missing and malformed usernames have no profile.
+      assert.equal(await getPublicProfile(db, `prof-sus-${suffix}`), null);
+      assert.equal(await getPublicProfile(db, `prof-demo-${suffix}`), null);
+      assert.equal(await getPublicProfile(db, `prof-missing-${suffix}`), null);
+      assert.equal(await getPublicProfile(db, "Not A Username!"), null);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

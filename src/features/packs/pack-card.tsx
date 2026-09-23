@@ -54,7 +54,7 @@ export function PackCard({ pack }: { pack: PackListItem }) {
           </Link>
           <p className="mt-1 text-xs text-zinc-500">
             <Link href={`/packs/category/${pack.categorySlug}`} className="hover:text-accent-400">{pack.categoryName}</Link>
-            <span aria-hidden> · </span>@{pack.creatorUsername}
+            <span aria-hidden> · </span><Link href={`/u/${pack.creatorUsername}`} className="hover:text-accent-400">@{pack.creatorUsername}</Link>
           </p>
         </div>
         <p className="mt-3 line-clamp-2 text-sm leading-6 text-zinc-400">{pack.excerpt}</p>
