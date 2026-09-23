@@ -154,6 +154,11 @@ export async function seedDatabase(db: Pick<Database, "transaction">, includeDem
       { id: "fcat_paketler", slug: "paketler", name: "Paket tartışmaları", description: "Paket deneyimleri, öneriler ve karşılaştırmalar.", sortOrder: 1 },
       { id: "fcat_yardim", slug: "yardim", name: "Yardım ve destek", description: "Kurulum, uyumluluk ve kullanım soruları.", sortOrder: 2 },
     ]).onConflictDoNothing();
+    await tx.insert(s.newsCategories).values([
+      { id: "ncat_duyurular", slug: "duyurular", name: "Duyurular", sortOrder: 0 },
+      { id: "ncat_rehberler", slug: "rehberler", name: "Rehberler", sortOrder: 1 },
+      { id: "ncat_topluluk", slug: "topluluk", name: "Topluluk", sortOrder: 2 },
+    ]).onConflictDoNothing();
     await tx
       .insert(s.featureFlags)
       .values([

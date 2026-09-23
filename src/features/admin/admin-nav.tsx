@@ -11,6 +11,7 @@ const items = [
   { href: "/admin/forum", label: "Forum", permission: "forum.moderate" },
   { href: "/admin/moderation", label: "Bildirimler", permission: "moderation.access" },
   { href: "/admin/bans", label: "Yasaklar", permission: "user.ban" },
+  { href: "/admin/news", label: "Haberler", permission: "news.write", alternatePermission: "news.manage" },
   { href: "/admin/categories", label: "Kategoriler", permission: "category.manage" },
   { href: "/admin/tags", label: "Etiketler", permission: "tag.manage" },
   { href: "/admin/homepage", label: "Ana sayfa", permission: "homepage.manage" },
@@ -23,7 +24,7 @@ export function AdminNav({ permissions }: { permissions: string[] }) {
   const pathname = usePathname();
   return (
     <nav aria-label="Yönetim bölümleri" className="flex gap-1 overflow-x-auto border-b border-line">
-      {items.filter((item) => permissions.includes(item.permission)).map((item) => {
+      {items.filter((item) => permissions.includes(item.permission) || ("alternatePermission" in item && permissions.includes(item.alternatePermission))).map((item) => {
         const active = item.href === "/admin" ? pathname === item.href : pathname.startsWith(item.href);
         return (
           <Link

@@ -69,7 +69,7 @@ period or lift their bans.
 | `/admin/forum`                  | RSC+API | `forum.moderate`           |
 | `/admin/moderation`             | RSC+API | `moderation.access` (queue); decisions need `moderation.resolve` |
 | `/admin/bans`                   | RSC+API | `user.ban` (search, ban/unban lower-ranked users) |
-| `/admin/news` (+ `new`, `[id]`) | RSC+CA | `news.manage`               |
+| `/admin/news` (+ `new`, `[id]`) | RSC+API | `news.write` draft/own review; `news.manage` publish/archive |
 | `/admin/ai-news`                | RSC+CA | `ai.manage`                 |
 | `/admin/installer`              | RSC+CA | `installer.manage`          |
 | `/admin/homepage`               | RSC+CA | `homepage.manage`           |
@@ -138,6 +138,10 @@ instead of a destructive row delete.
 | `/api/admin/forum/topics/[id]`        | PATCH            | `forum.moderate` | lock/unlock, pin/unpin, hide/show |
 | `/api/admin/moderation/[id]`          | PATCH            | `moderation.resolve` | reviewing/resolved/dismissed with audit |
 | `/api/admin/bans/[id]`                | PATCH            | `user.ban` | 1-365 day ban or unban, rank gate, audit |
+| `/api/news`                           | GET              | public | published non-demo news, paged |
+| `/api/admin/news`                     | GET/POST         | `news.write` or `news.manage` read / `news.write` create draft |
+| `/api/admin/news/[id]`                | PATCH            | author `news.write` or `news.manage` | edit draft/review |
+| `/api/admin/news/[id]/status`         | POST             | `news.write` review / `news.manage` publish, archive |
 | `/api/notifications`                  | GET/PATCH        | member          |                                   |
 | `/api/installer/manifest/[packageId]` | GET              | public          | signed manifest                   |
 | `/api/installer/report`               | POST             | installer token | install telemetry (opt-in)        |

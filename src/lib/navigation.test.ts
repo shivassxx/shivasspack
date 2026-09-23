@@ -13,8 +13,8 @@ describe("primary navigation", () => {
 
   it("only links categories returned by the enabled-category query", () => {
     const items = primaryNavItems([{ slug: "pvp", name: "PvP" }, { slug: "other", name: "Diğer" }]);
-    expect(items.map((item) => item.href)).toEqual(["/packs", "/packs/category/pvp", "/packs/category/other", "/forum"]);
-    expect(primaryNavItems([])).toEqual([{ href: "/packs", label: "Paketler" }, { href: "/forum", label: "Forum" }]);
+    expect(items.map((item) => item.href)).toEqual(["/packs", "/packs/category/pvp", "/packs/category/other", "/forum", "/news"]);
+    expect(primaryNavItems([])).toEqual([{ href: "/packs", label: "Paketler" }, { href: "/forum", label: "Forum" }, { href: "/news", label: "Haberler" }]);
   });
 
   it("marks only the category entry on category pages", () => {

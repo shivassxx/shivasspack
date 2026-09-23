@@ -70,6 +70,7 @@ import { getMemberDownloadHistory, getPackDownloadOptions, resolvePackDownload, 
 import { createForumReply, createForumTopic, forumPage, getForumCategory, getForumTopic, listForumCategories, listForumModeration, listForumReplies, listForumTopics, moderateForumTopic, updateForumTopic } from "../services/forum";
 import { decideReport, listModerationReports, reportForumContent } from "../services/moderation";
 import { listBanTargets, setUserBan } from "../services/admin/users";
+import { createNews, getAdminNewsArticle, getPublishedArticle, listAdminNews, listNewsCategories, listPublishedNews, transitionNews, updateNews } from "../services/news";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -369,6 +370,9 @@ test("seed is idempotent and preserves edited settings, roles and permissions", 
         .where(inArray(schema.forumCategories.id, ["fcat_genel", "fcat_paketler", "fcat_yardim"]));
       assert.equal(forumCategories.length, 3);
       assert.equal(forumCategories.find((category) => category.id === "fcat_genel")?.enabled, false);
+      const newsCategories = await tx.select({ id: schema.newsCategories.id }).from(schema.newsCategories)
+        .where(inArray(schema.newsCategories.id, ["ncat_duyurular", "ncat_rehberler", "ncat_topluluk"]));
+      assert.equal(newsCategories.length, 3);
       const [demo] = await tx
         .select()
         .from(schema.users)
@@ -1894,6 +1898,66 @@ test("forum moderators can ban lower-ranked users; active gates and audit honor 
       const actions = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
         .where(eq(schema.auditLogs.targetId, targetId));
       assert.deepEqual(actions.map((item) => item.action).sort(), ["user.ban", "user.unban"]);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("news drafts, review, publication and archive enforce owner roles and public visibility", async () => {
+  const rollback = new Error("ROLLBACK_NEWS_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const users = await tx.insert(schema.users).values([1, 2].map((number) => ({
+        username: `news-${number}-${suffix}`, displayName: `News Author ${number}`,
+        email: `news-${number}-${suffix}@example.invalid`, roleId: role.id,
+      }))).returning({ id: schema.users.id });
+      const [category] = await tx.insert(schema.newsCategories).values({ slug: `news-${suffix}`,
+        name: "Test News" }).returning({ id: schema.newsCategories.id });
+      assert.ok(users[0] && users[1] && category);
+      const writer: Actor = { id: users[0]!.id, displayName: "News Author 1", roleKey: "member",
+        status: "active", banUntil: null, permissions: new Set<PermissionKey>(["news.write"]) };
+      const editor: Actor = { ...writer, id: users[1]!.id, permissions: new Set<PermissionKey>(["news.manage"]) };
+      const input = { title: `A useful news title ${suffix}`, excerpt: "A detailed summary with enough context for readers.",
+        content: "A real article covering changes in the FiveM community and how they affect the packs we host.",
+        categoryId: category.id, seoTitle: "Custom search title" };
+      await assert.rejects(createNews(db, editor, input), /news.write/);
+      await assert.rejects(createNews(db, writer, { ...input, content: "too short" }), /Haber içeriği/);
+      await assert.rejects(createNews(db, writer, { ...input, sourceUrl: "javascript:alert(1)" }), /HTTP/);
+      const draft = await createNews(db, writer, input);
+      assert.equal(draft.status, "draft");
+      const duplicate = await createNews(db, writer, input);
+      assert.equal(duplicate.slug, `${draft.slug}-2`);
+      assert.equal(await getPublishedArticle(db, draft.slug), null);
+      assert.ok(!(await listPublishedNews(db)).items.some((item) => item.id === draft.id));
+      assert.deepEqual((await listAdminNews(db, writer)).map((item) => item.id).sort(), [draft.id, duplicate.id].sort());
+      assert.ok((await listAdminNews(db, editor)).some((item) => item.id === draft.id));
+      assert.equal(await getAdminNewsArticle(db, { ...editor, permissions: new Set<PermissionKey>(["news.write"]) }, draft.id), null);
+      assert.equal((await listNewsCategories(db)).some((item) => item.id === category.id), true);
+      await assert.rejects(updateNews(db, { ...editor, permissions: new Set() }, draft.id, input), /iznin yok/);
+      const edited = await updateNews(db, writer, draft.id, { ...input, title: "Edited title for publication" });
+      assert.equal(edited.slug, draft.slug);
+      await assert.rejects(transitionNews(db, writer, draft.id, "publish"), /news.manage/);
+      const reviewed = await transitionNews(db, writer, draft.id, "review");
+      assert.equal(reviewed.status, "review");
+      await assert.rejects(transitionNews(db, writer, draft.id, "review"), /Geçersiz haber/);
+      const published = await transitionNews(db, editor, draft.id, "publish");
+      assert.equal(published.status, "published");
+      const publicItem = await getPublishedArticle(db, draft.slug);
+      assert.equal(publicItem?.title, "Edited title for publication");
+      assert.equal(publicItem?.seoTitle, "Custom search title");
+      assert.ok((await listPublishedNews(db)).items.some((item) => item.id === draft.id));
+      await assert.rejects(updateNews(db, editor, draft.id, input), /Yayınlanmış/);
+      const archived = await transitionNews(db, editor, draft.id, "archive");
+      assert.equal(archived.status, "archived");
+      assert.equal(await getPublishedArticle(db, draft.slug), null);
+      await assert.rejects(transitionNews(db, editor, draft.id, "publish"), /Geçersiz haber/);
+      const audits = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
+        .where(eq(schema.auditLogs.targetId, draft.id));
+      assert.deepEqual(audits.map((row) => row.action).sort(), ["news.archive", "news.create", "news.publish", "news.review", "news.update"]);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

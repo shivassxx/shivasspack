@@ -16,6 +16,7 @@ const adminPermissions: readonly PermissionKey[] = [
   "forum.moderate",
   "moderation.access",
   "news.manage",
+  "news.write",
   "ai.manage",
   "installer.manage",
   "homepage.manage",

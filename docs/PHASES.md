@@ -557,3 +557,23 @@ restored posting. Both live E2E users, topic, replies, report and audit data
 were removed with zero fixture residue. The core Phase 9 forum/report/ban/audit
 flow is complete; remaining route-map concepts outside this slice are not
 presented as working links.
+
+## Phase 10 checkpoint (news/AI, in progress)
+
+The first news slice adds three insert-only reference categories; `/news`,
+`/news/[slug]` and `GET /api/news` show only published non-demo articles, with
+pagination, canonical/OG metadata and NewsArticle structured data. Drafts,
+review items and archives remain hidden from public routes. `/admin/news`
+supports category-based draft creation, author/manager editing and transitions
+draft → review (`news.write`) → published → archived (`news.manage`). Every
+mutation checks session permissions and writes an audit row in the same
+transaction; duplicate titles receive unique, stable slugs. Article content
+accepts 50,000 characters via a 256 KiB news-editor body budget. The author
+may edit drafts and review items, while published/archived versions are locked.
+The PostgreSQL integration suite includes authorization, validation, unique
+slugs, public visibility, metadata fields, transition and audit checks (39
+tests total). `npm run check` passed typecheck, lint, 114 unit tests and build.
+Standalone HTTP verified custom writer vs editor grants, a 50,000-character
+draft, duplicate slug allocation, draft/review 404s, editor publication with
+public listing/NewsArticle SEO, locked published edits and archived 404. The
+temporary authors, roles, articles, sessions and audit rows were removed.
