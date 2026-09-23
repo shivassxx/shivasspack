@@ -724,6 +724,9 @@ test("public pack queries expose only approved non-demo content with filters", a
       assert.equal(categories.find((item) => item.slug === category.slug)?.packCount, 2);
       assert.equal((await getPublishedPack(db, second.slug))?.title, "Beta Performance");
       assert.equal(await getPublishedPack(db, "not-a-real-pack"), null);
+      await tx.update(schema.packCategories).set({ enabled: false }).where(eq(schema.packCategories.id, category.id));
+      assert.equal((await listPublicCategories(db)).some((item) => item.slug === category.slug), false);
+      assert.equal((await listPublishedPacks(db, { category: category.slug })).total, 0);
       throw rollback;
     });
   } catch (error) {

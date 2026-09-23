@@ -7,10 +7,13 @@ import { MobileNav } from "@/features/layout/mobile-nav";
 import { SiteNav } from "@/features/layout/site-nav";
 import { primaryNavItems } from "@/lib/navigation";
 import { BrandName } from "@/components/ui/brand-name";
+import { getDatabase } from "@/db/client";
+import { listPublicCategories } from "@/services/packs/public";
 
 export async function SiteHeader({ siteName }: { siteName: string }) {
   // Gerçek oturum: çerez okunduğu için sayfalar dinamik render olur.
-  const actor = await getCurrentActor();
+  const [actor, categories] = await Promise.all([getCurrentActor(), listPublicCategories(getDatabase().db)]);
+  const navItems = primaryNavItems(categories);
   const menuUser =
     actor.id === null || actor.displayName === null
       ? null
@@ -32,12 +35,12 @@ export async function SiteHeader({ siteName }: { siteName: string }) {
           </span>
         </Link>
 
-        <SiteNav items={primaryNavItems} />
+        <SiteNav items={navItems} />
 
         <div className="ml-auto flex items-center gap-2">
           <NavSearch />
           <UserMenu user={menuUser} />
-          <MobileNav items={primaryNavItems} triggerLabel="Menüyü aç">
+          <MobileNav items={navItems} triggerLabel="Menüyü aç">
             <Menu className="size-5 lg:hidden" aria-hidden />
           </MobileNav>
         </div>

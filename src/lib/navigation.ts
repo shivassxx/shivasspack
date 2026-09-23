@@ -1,12 +1,17 @@
 export type NavItem = { href: string; label: string };
 
-export const primaryNavItems: readonly NavItem[] = [
-  { href: "/packs", label: "Paketler" },
-  { href: "/packs/category/graphics", label: "Grafik" },
-  { href: "/packs/category/pvp", label: "PvP" },
-  { href: "/packs/category/reshade", label: "ReShade" },
-  { href: "/packs/category/enb", label: "ENB" },
-] as const;
+const shortLabels: Record<string, string> = { graphics: "Grafik", pvp: "PvP", reshade: "ReShade", enb: "ENB" };
+
+/** PublicCategory is already restricted to enabled categories in sort order. */
+export function primaryNavItems(categories: readonly { slug: string; name: string }[]): NavItem[] {
+  return [
+    { href: "/packs", label: "Paketler" },
+    ...categories.slice(0, 4).map((category) => ({
+      href: `/packs/category/${category.slug}`,
+      label: shortLabels[category.slug] ?? category.name,
+    })),
+  ];
+}
 
 export function isNavItemActive(pathname: string, href: string): boolean {
   if (href.startsWith("/packs/category/")) return pathname === href;

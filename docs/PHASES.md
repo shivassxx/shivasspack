@@ -197,8 +197,10 @@ and toggle only the four implemented sections (hero, featured, trending, known).
 The update is validated, permission-checked and audited in one DB transaction.
 Unimplemented Forum/News navigation links and the inactive installation-guide
 CTA have been removed/replaced with working destinations.
+The desktop/mobile category links now follow enabled categories from the same
+public query; disabling a category removes its menu link on the next request.
 
-`npm run check` passed TypeScript, lint, 96 unit tests and production build;
+`npm run check` passed TypeScript, lint, 97 unit tests and production build;
 `npm run db:test` passed 21 real-DB tests. Production HTTP E2E confirmed API
 401/403/400, section ordering/visibility on the public homepage, admin UI,
 audit insertion and restoration of the original section settings. The user
