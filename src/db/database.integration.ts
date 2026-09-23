@@ -71,6 +71,7 @@ import { createForumReply, createForumTopic, forumPage, getForumCategory, getFor
 import { decideReport, listModerationReports, reportForumContent } from "../services/moderation";
 import { listBanTargets, setUserBan } from "../services/admin/users";
 import { createNews, getAdminNewsArticle, getPublishedArticle, listAdminNews, listNewsCategories, listPublishedNews, transitionNews, updateNews } from "../services/news";
+import { createAiSource, deleteAiSource, listAiSources, updateAiSource } from "../services/ai-sources";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -1958,6 +1959,50 @@ test("news drafts, review, publication and archive enforce owner roles and publi
       const audits = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
         .where(eq(schema.auditLogs.targetId, draft.id));
       assert.deepEqual(audits.map((row) => row.action).sort(), ["news.archive", "news.create", "news.publish", "news.review", "news.update"]);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("AI source CRUD enforces manage grant, validation, unique URLs and audits", async () => {
+  const rollback = new Error("ROLLBACK_AI_SOURCE_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const [user] = await tx.insert(schema.users).values({ username: `aisrc-${suffix}`,
+        displayName: "AI Source Manager", email: `aisrc-${suffix}@example.invalid`, roleId: role.id })
+        .returning({ id: schema.users.id });
+      assert.ok(user);
+      const actor: Actor = { id: user.id, displayName: "AI Source Manager", roleKey: "member",
+        status: "active", banUntil: null, permissions: new Set<PermissionKey>(["ai.manage"]) };
+      const input = { name: "Source One", url: `https://example.invalid/${suffix}/feed.xml`,
+        enabled: false, trusted: false, intervalMinutes: 60, language: "tr" };
+      await assert.rejects(createAiSource(db, { ...actor, permissions: new Set() }, input), /ai.manage/);
+      await assert.rejects(createAiSource(db, actor, { ...input, url: "javascript:alert(1)" }), /HTTP/);
+      await assert.rejects(createAiSource(db, actor, { ...input, intervalMinutes: 0 }), /aralığı/);
+      await assert.rejects(createAiSource(db, actor, { ...input, enabled: "true" }), /boolean/);
+      const created = await createAiSource(db, actor, input);
+      assert.equal(created.enabled, false);
+      assert.ok((await listAiSources(db, actor)).some((source) => source.id === created.id));
+      await assert.rejects(createAiSource(db, actor, input), /zaten kayıtlı/);
+      const changed = await updateAiSource(db, actor, created.id, { ...input, name: "Source Revised",
+        enabled: true, trusted: true, language: "en", intervalMinutes: 15 });
+      assert.equal(changed.name, "Source Revised");
+      const [stored] = await tx.select().from(schema.aiSources).where(eq(schema.aiSources.id, created.id));
+      assert.equal(stored?.enabled, true);
+      assert.equal(stored?.trusted, true);
+      assert.equal(stored?.intervalMinutes, 15);
+      assert.equal(stored?.language, "en");
+      await assert.rejects(updateAiSource(db, actor, `aisrc_unknown_${suffix}`, input), /bulunamadı/);
+      await assert.rejects(deleteAiSource(db, actor, `aisrc_unknown_${suffix}`), /bulunamadı/);
+      await deleteAiSource(db, actor, created.id);
+      assert.ok(!(await listAiSources(db, actor)).some((source) => source.id === created.id));
+      const audits = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
+        .where(eq(schema.auditLogs.targetId, created.id));
+      assert.deepEqual(audits.map((entry) => entry.action).sort(), ["ai.source.create", "ai.source.delete", "ai.source.update"]);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

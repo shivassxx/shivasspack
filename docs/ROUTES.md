@@ -70,7 +70,7 @@ period or lift their bans.
 | `/admin/moderation`             | RSC+API | `moderation.access` (queue); decisions need `moderation.resolve` |
 | `/admin/bans`                   | RSC+API | `user.ban` (search, ban/unban lower-ranked users) |
 | `/admin/news` (+ `new`, `[id]`) | RSC+API | `news.write` draft/own review; `news.manage` publish/archive |
-| `/admin/ai-news`                | RSC+CA | `ai.manage`                 |
+| `/admin/ai-news`                | RSC+API | `ai.manage` (source CRUD)  |
 | `/admin/installer`              | RSC+CA | `installer.manage`          |
 | `/admin/homepage`               | RSC+CA | `homepage.manage`           |
 | `/admin/settings`               | RSC+CA | `admin.settings`            |
@@ -142,6 +142,8 @@ instead of a destructive row delete.
 | `/api/admin/news`                     | GET/POST         | `news.write` or `news.manage` read / `news.write` create draft |
 | `/api/admin/news/[id]`                | PATCH            | author `news.write` or `news.manage` | edit draft/review |
 | `/api/admin/news/[id]/status`         | POST             | `news.write` review / `news.manage` publish, archive |
+| `/api/admin/ai-sources`                | GET/POST         | `ai.manage` | list/create AI news sources |
+| `/api/admin/ai-sources/[id]`           | PATCH/DELETE     | `ai.manage` | edit/delete non-demo sources with audit |
 | `/api/notifications`                  | GET/PATCH        | member          |                                   |
 | `/api/installer/manifest/[packageId]` | GET              | public          | signed manifest                   |
 | `/api/installer/report`               | POST             | installer token | install telemetry (opt-in)        |

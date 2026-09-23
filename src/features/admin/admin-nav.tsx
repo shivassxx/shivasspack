@@ -12,6 +12,7 @@ const items = [
   { href: "/admin/moderation", label: "Bildirimler", permission: "moderation.access" },
   { href: "/admin/bans", label: "Yasaklar", permission: "user.ban" },
   { href: "/admin/news", label: "Haberler", permission: "news.write", alternatePermission: "news.manage" },
+  { href: "/admin/ai-news", label: "AI Kaynakları", permission: "ai.manage" },
   { href: "/admin/categories", label: "Kategoriler", permission: "category.manage" },
   { href: "/admin/tags", label: "Etiketler", permission: "tag.manage" },
   { href: "/admin/homepage", label: "Ana sayfa", permission: "homepage.manage" },

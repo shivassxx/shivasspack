@@ -577,3 +577,17 @@ Standalone HTTP verified custom writer vs editor grants, a 50,000-character
 draft, duplicate slug allocation, draft/review 404s, editor publication with
 public listing/NewsArticle SEO, locked published edits and archived 404. The
 temporary authors, roles, articles, sessions and audit rows were removed.
+
+AI source setup slice: `/admin/ai-news` and `/api/admin/ai-sources` provide
+real role-gated create/list/edit/delete of non-demo HTTP(S) news sources.
+Each source stores its name, URL, enabled/trusted state, language and bounded
+control interval. Mutations validate inputs, handle duplicate URLs as 409,
+and write transactional audit entries. The PostgreSQL suite includes these
+permissions, validation, duplicate, update, delete and audit checks (40 tests
+total). Provider configuration, feed fetching, generation jobs and publication
+policy still belong to the next Phase 10 slices; the source screen exposes no
+generation action yet.
+`npm run check` passed typecheck, lint, 114 unit tests and production build;
+40 PostgreSQL tests passed. Live HTTP verified member 403, admin source form,
+validation 400, duplicate 409, create/list/update/delete and all three audit
+actions. The temporary account, source, sessions and audit rows were removed.
