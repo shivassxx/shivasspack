@@ -596,10 +596,21 @@ Each source stores its name, URL, enabled/trusted state, language and bounded
 control interval. Mutations validate inputs, handle duplicate URLs as 409,
 and write transactional audit entries. The PostgreSQL suite includes these
 permissions, validation, duplicate, update, delete and audit checks (40 tests
-total). Provider configuration, feed fetching, generation jobs and publication
-policy still belong to the next Phase 10 slices; the source screen exposes no
+total). Feed fetching, generation jobs and publication policy still belong to
+the next Phase 10 slices; the source screen exposes no
 generation action yet.
 `npm run check` passed typecheck, lint, 114 unit tests and production build;
 40 PostgreSQL tests passed. Live HTTP verified member 403, admin source form,
 validation 400, duplicate 409, create/list/update/delete and all three audit
 actions. The temporary account, source, sessions and audit rows were removed.
+
+`/admin/ai-news` also persists provider (none/OpenAI/Anthropic/Gemini), model,
+editorial prompt and 0-1 confidence threshold through role-gated
+`GET/PUT /api/admin/ai-config`. The API key is never stored in or returned from
+the database. Updates preserve the disabled automatic-publishing setting and
+record the provider/model/threshold change in audit. PostgreSQL integration
+validates provider/model/range/permission constraints and the persisted value.
+`npm run check` and 41 PostgreSQL tests passed; live HTTP verified member 403,
+admin form/API, invalid-provider 400, persistence, unchanged auto-publish and
+audit. The test account and audit entry were removed and the previous provider
+settings restored.

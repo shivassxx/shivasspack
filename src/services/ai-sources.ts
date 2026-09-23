@@ -103,3 +103,50 @@ export async function deleteAiSource(db: Database, actor: Actor, id: string) {
     return { id: before.id };
   });
 }
+
+export type AiConfigInput = { provider?: unknown; model?: unknown; prompt?: unknown; minConfidence?: unknown };
+
+export async function getAiConfig(db: Database, actor: Actor) {
+  gate(actor);
+  const [config] = await db.select({ provider: s.aiConfigs.provider, model: s.aiConfigs.model,
+    prompt: s.aiConfigs.prompt, minConfidence: s.aiConfigs.minConfidence,
+    autoPublish: s.aiConfigs.autoPublish, language: s.aiConfigs.language })
+    .from(s.aiConfigs).where(eq(s.aiConfigs.key, "default")).limit(1);
+  if (!config) throw new AiSourceError("not_found", "AI ayarları bulunamadı.", 404);
+  return config;
+}
+
+export async function saveAiConfig(db: Database, actor: Actor, input: AiConfigInput) {
+  gate(actor);
+  const provider = input.provider;
+  if (provider !== "none" && provider !== "openai" && provider !== "anthropic" && provider !== "gemini") {
+    throw new AiSourceError("validation", "Geçersiz AI sağlayıcısı.", 400);
+  }
+  const model = typeof input.model === "string" ? input.model.trim() : "";
+  const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
+  const confidence = input.minConfidence;
+  if (model.length > 120 || (provider !== "none" && model.length < 2)) {
+    throw new AiSourceError("validation", "Sağlayıcı için 2-120 karakter model adı gerekli.", 400);
+  }
+  if (prompt.length > 5000 || typeof confidence !== "number" || !Number.isFinite(confidence) ||
+      confidence < 0 || confidence > 1) {
+    throw new AiSourceError("validation", "Prompt en fazla 5000 karakter; güven eşiği 0-1 aralığında olmalı.", 400);
+  }
+  const values = { provider: provider as "none" | "openai" | "anthropic" | "gemini",
+    model: model || null, prompt, minConfidence: confidence.toFixed(3) };
+  return db.transaction(async (tx) => {
+    const [before] = await tx.select().from(s.aiConfigs)
+      .where(eq(s.aiConfigs.key, "default")).for("update");
+    if (!before) throw new AiSourceError("not_found", "AI ayarları bulunamadı.", 404);
+    const [updated] = await tx.update(s.aiConfigs).set(values).where(eq(s.aiConfigs.key, "default"))
+      .returning({ provider: s.aiConfigs.provider, model: s.aiConfigs.model,
+        prompt: s.aiConfigs.prompt, minConfidence: s.aiConfigs.minConfidence,
+        autoPublish: s.aiConfigs.autoPublish });
+    if (!updated) throw new Error("AI config update returned no row.");
+    await tx.insert(s.auditLogs).values({ actorId: actor.id, action: "ai.config.update",
+      targetType: "ai_config", targetId: "default",
+      before: { provider: before.provider, model: before.model, minConfidence: before.minConfidence },
+      after: { provider: updated.provider, model: updated.model, minConfidence: updated.minConfidence } });
+    return updated;
+  });
+}

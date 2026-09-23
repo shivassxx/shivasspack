@@ -71,7 +71,7 @@ import { createForumReply, createForumTopic, forumPage, getForumCategory, getFor
 import { decideReport, listModerationReports, reportForumContent } from "../services/moderation";
 import { listBanTargets, setUserBan } from "../services/admin/users";
 import { createNews, getAdminNewsArticle, getPublishedArticle, listAdminNews, listNewsCategories, listPublishedNews, transitionNews, updateNews } from "../services/news";
-import { createAiSource, deleteAiSource, listAiSources, updateAiSource } from "../services/ai-sources";
+import { createAiSource, deleteAiSource, getAiConfig, listAiSources, saveAiConfig, updateAiSource } from "../services/ai-sources";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -2030,6 +2030,17 @@ test("AI source CRUD enforces manage grant, validation, unique URLs and audits",
       await assert.rejects(createAiSource(db, actor, { ...input, url: "javascript:alert(1)" }), /HTTP/);
       await assert.rejects(createAiSource(db, actor, { ...input, intervalMinutes: 0 }), /aralığı/);
       await assert.rejects(createAiSource(db, actor, { ...input, enabled: "true" }), /boolean/);
+      await assert.rejects(getAiConfig(db, { ...actor, permissions: new Set() }), /ai.manage/);
+      const originalConfig = await getAiConfig(db, actor);
+      await assert.rejects(saveAiConfig(db, actor, { provider: "invalid", model: "x", prompt: "", minConfidence: 0.5 }), /sağlayıcısı/);
+      await assert.rejects(saveAiConfig(db, actor, { provider: "openai", model: "x", prompt: "", minConfidence: 0.5 }), /model adı/);
+      await assert.rejects(saveAiConfig(db, actor, { provider: "openai", model: "model-x", prompt: "", minConfidence: 2 }), /güven eşiği/);
+      const savedConfig = await saveAiConfig(db, actor, { provider: "openai", model: "test-model",
+        prompt: "Only factual claims.", minConfidence: 0.92 });
+      assert.equal(savedConfig.provider, "openai");
+      assert.equal(savedConfig.minConfidence, "0.920");
+      assert.equal(savedConfig.autoPublish, originalConfig.autoPublish);
+      assert.equal((await getAiConfig(db, actor)).prompt, "Only factual claims.");
       const created = await createAiSource(db, actor, input);
       assert.equal(created.enabled, false);
       assert.ok((await listAiSources(db, actor)).some((source) => source.id === created.id));
@@ -2049,6 +2060,9 @@ test("AI source CRUD enforces manage grant, validation, unique URLs and audits",
       const audits = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
         .where(eq(schema.auditLogs.targetId, created.id));
       assert.deepEqual(audits.map((entry) => entry.action).sort(), ["ai.source.create", "ai.source.delete", "ai.source.update"]);
+      const [configAudit] = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
+        .where(and(eq(schema.auditLogs.targetType, "ai_config"), eq(schema.auditLogs.actorId, actor.id!)));
+      assert.equal(configAudit?.action, "ai.config.update");
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }
