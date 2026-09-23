@@ -50,6 +50,7 @@ import { getBookmarkState, getMemberBookmarks, setPackBookmark } from "../servic
 import { getPackLikeState, setPackLike } from "../services/packs/likes";
 import { getMemberRating, setPackRating } from "../services/packs/ratings";
 import { createPackComment, listPackComments } from "../services/packs/comments";
+import { recordPackView } from "../services/packs/views";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -939,6 +940,48 @@ test("pack comments enforce public visibility, member permissions and paginated 
       await tx.update(schema.packCategories).set({ enabled: false }).where(eq(schema.packCategories.id, category.id));
       await assert.rejects(listPackComments(db, slug), /Paket bulunamadı/);
       await assert.rejects(createPackComment(db, actor, slug, "Görünmez."), /Paket bulunamadı/);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("pack views dedupe one identity per window and stay visibility-gated", async () => {
+  const rollback = new Error("ROLLBACK_PACK_VIEW_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const [user] = await tx.insert(schema.users).values({ username: `viewer-${suffix}`, displayName: "Viewer",
+        email: `viewer-${suffix}@example.invalid`, roleId: role.id }).returning({ id: schema.users.id });
+      const [category] = await tx.insert(schema.packCategories).values({ slug: `view-${suffix}`,
+        name: "View Category", kind: "graphics" }).returning({ id: schema.packCategories.id });
+      assert.ok(user && category);
+      const slug = `view-${suffix}`;
+      const [pack] = await tx.insert(schema.packs).values({ slug, title: "View Test Pack", excerpt: "A public package",
+        description: "A public package for view tests.", categoryId: category.id, creatorId: user.id,
+        status: "approved", publishedAt: new Date(Date.now() - 60000),
+      }).returning({ id: schema.packs.id });
+      assert.ok(pack);
+      const guest = "guest:203.0.113.7|viewer-agent/1.0";
+      assert.deepEqual(await recordPackView(db, slug, guest), { viewed: true, viewCount: 1 });
+      assert.deepEqual(await recordPackView(db, slug, guest), { viewed: false, viewCount: 1 });
+      assert.deepEqual(await recordPackView(db, slug, guest), { viewed: false, viewCount: 1 });
+      assert.deepEqual(await recordPackView(db, slug, "guest:203.0.113.8|other-agent/1.0"), { viewed: true, viewCount: 2 });
+      assert.deepEqual(await recordPackView(db, slug, `user:${user.id}`), { viewed: true, viewCount: 3 });
+      assert.deepEqual(await recordPackView(db, slug, `user:${user.id}`), { viewed: false, viewCount: 3 });
+      const [stored] = await tx.select({ count: schema.packs.viewCount }).from(schema.packs).where(eq(schema.packs.id, pack.id));
+      assert.equal(stored?.count, 3);
+      await assert.rejects(recordPackView(db, "bad slug", guest), /Paket bulunamadı/);
+      await assert.rejects(recordPackView(db, `missing-${suffix}`, guest), /Paket bulunamadı/);
+      await tx.update(schema.packCategories).set({ enabled: false }).where(eq(schema.packCategories.id, category.id));
+      await assert.rejects(recordPackView(db, slug, "guest:203.0.113.9|new-agent/1.0"), /Paket bulunamadı/);
+      await tx.update(schema.packCategories).set({ enabled: true }).where(eq(schema.packCategories.id, category.id));
+      await tx.update(schema.packs).set({ status: "archived" }).where(eq(schema.packs.id, pack.id));
+      await assert.rejects(recordPackView(db, slug, "guest:203.0.113.9|new-agent/1.0"), /Paket bulunamadı/);
+      const [final] = await tx.select({ count: schema.packs.viewCount }).from(schema.packs).where(eq(schema.packs.id, pack.id));
+      assert.equal(final?.count, 3);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

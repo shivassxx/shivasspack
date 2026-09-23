@@ -109,7 +109,7 @@ instead of a destructive row delete.
 | `/api/admin/users`                    | GET              | `user.manage`     | search/page real users           |
 | `/api/admin/users/[id]`               | PATCH            | `user.manage` + `role.manage` | assign lower role |
 | `/api/packs/[slug]/download`          | GET              | public          | 302 to mirror, rate-limited       |
-| `/api/packs/[slug]/view`              | POST             | public          | beacon, deduped                   |
+| `/api/packs/[slug]/view`              | POST             | public          | beacon, deduped per identity 30m |
 | `/api/packs/[slug]/rate`              | PUT/DELETE       | member          | set 1..5 / remove, recompute avg  |
 | `/api/packs/[slug]/like`              | PUT/DELETE       | member          | idempotent like/remove + count    |
 | `/api/packs/[slug]/bookmark`          | PUT/DELETE       | member          | idempotent save/remove + count    |

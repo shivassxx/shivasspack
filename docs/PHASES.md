@@ -318,4 +318,16 @@ existing database rate limiter; failed validation/visibility attempts also
 consume that bucket. Out-of-range page numbers clamp to the last valid page.
 Hidden categories, drafts and archived packs return 404. The unit suite now
 has 101 tests and the real PostgreSQL suite has 27, including input,
-permissions, hidden/demo exclusion, pagination and count.
+permissions, hidden/demo exclusion, pagination and count. Standalone HTTP
+confirmed guest 401, validation 400, two-member posting, hidden exclusion,
+the per-member 429 bucket, page clamping and disabled-category 404; temporary
+users, sessions, category, pack, comments and rate rows were removed.
+
+Pack view tracking is a public POST beacon fired once per detail-page mount.
+`recordPackView` only accepts approved, non-demo packs in enabled categories;
+identity is the member id or guest IP + user agent, hashed through the shared
+rate limiter so each identity counts at most once per pack per 30 minutes.
+The increment is one atomic UPDATE and the visible counter refreshes only
+when a view was actually recorded. PostgreSQL coverage is now 28 tests,
+covering guest/member identities, repeats, two visitors, bad slugs, disabled
+categories and archived packs.

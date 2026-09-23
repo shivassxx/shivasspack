@@ -7,6 +7,7 @@ import { BookmarkButton } from "@/features/packs/bookmark-button";
 import { CommentForm } from "@/features/packs/comment-form";
 import { LikeButton } from "@/features/packs/like-button";
 import { RatingControl } from "@/features/packs/rating-control";
+import { ViewTracker } from "@/features/packs/view-tracker";
 import { getCurrentSession } from "@/lib/auth-context";
 import { getBookmarkState } from "@/services/packs/bookmarks";
 import { listPackComments } from "@/services/packs/comments";
@@ -71,6 +72,7 @@ export default async function PackDetailPage({ params, searchParams }: {
 
   return (
     <article className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6">
+      <ViewTracker slug={pack.slug} />
       <nav aria-label="İçerik yolu" className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
         <Link href="/packs" className="hover:text-accent-400">Paketler</Link>
         <span aria-hidden>/</span>
