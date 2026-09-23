@@ -52,7 +52,10 @@ export default async function SubmitPage() {
                 <p className="mt-2 text-xs text-zinc-500">
                   Son güncelleme: {formatDate(item.updatedAt)}
                   {item.status === "approved" ? (
-                    <> · <Link href={`/packs/${item.slug}`} className="text-accent-400 hover:text-accent-300">Yayındaki sayfa</Link></>
+                    <>
+                      {" · "}<Link href={`/packs/${item.slug}`} className="text-accent-400 hover:text-accent-300">Yayındaki sayfa</Link>
+                      {" · "}<Link href={`/submit/new?pack=${item.id}`} className="text-accent-400 hover:text-accent-300">Yeni sürüm</Link>
+                    </>
                   ) : null}
                 </p>
                 {item.reviewNote ? (

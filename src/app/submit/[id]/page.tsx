@@ -44,9 +44,14 @@ export default async function SubmissionEditPage({ params }: { params: Promise<{
           {submissionStatusLabels[submission.status] ?? submission.status}
         </span>
         {submission.status === "approved" ? (
-          <Link href={`/packs/${submission.slug}`} className="text-sm text-accent-400 hover:text-accent-300">
-            Yayındaki sayfa ↗
-          </Link>
+          <>
+            <Link href={`/packs/${submission.slug}`} className="text-sm text-accent-400 hover:text-accent-300">
+              Yayındaki sayfa ↗
+            </Link>
+            <Link href={`/submit/new?pack=${submission.id}`} className="text-sm text-accent-400 hover:text-accent-300">
+              Yeni sürüm ekle
+            </Link>
+          </>
         ) : null}
       </div>
       <p className="mt-2 text-xs text-zinc-500">Son güncelleme: {formatDate(submission.updatedAt)}</p>

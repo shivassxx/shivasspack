@@ -44,6 +44,7 @@ import {
   updateAdminPack,
 } from "../services/admin/packs";
 import {
+  createPackVersion,
   createSubmission,
   getOwnSubmission,
   listSubmissionOptions,
@@ -1432,6 +1433,113 @@ test("submission flow creates drafts, gates transitions and audits review decisi
       assert.ok(options.categories.some((item) => item.id === category.id));
       assert.ok(!options.categories.some((item) => item.id === hiddenCategory.id));
       assert.ok(options.tags.some((item) => item.id === tag.id));
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("authors add versions to approved packs with a single moving latest", async () => {
+  const rollback = new Error("ROLLBACK_PACK_VERSION_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const users = await tx.insert(schema.users).values([1, 2].map((number) => ({
+        username: `ver${number}-${suffix}`, displayName: `Author ${number}`,
+        email: `ver${number}-${suffix}@example.invalid`, roleId: role.id,
+      }))).returning({ id: schema.users.id });
+      assert.equal(users.length, 2);
+      const [category] = await tx.insert(schema.packCategories).values({ slug: `ver-${suffix}`,
+        name: "Version Category", kind: "graphics" }).returning({ id: schema.packCategories.id });
+      assert.ok(category);
+      const base = {
+        excerpt: "A versioned package", categoryId: category.id, status: "approved" as const,
+        publishedAt: new Date(Date.now() - 60000),
+      };
+      const [mine, draft, foreign] = await tx.insert(schema.packs).values([
+        { ...base, slug: `ver-mine-${suffix}`, title: "Versioned Pack", description: "Own approved pack.", creatorId: users[0]!.id },
+        { ...base, slug: `ver-draft-${suffix}`, title: "Draft Pack", description: "Not approved yet.",
+          creatorId: users[0]!.id, status: "draft" as const, publishedAt: null },
+        { ...base, slug: `ver-foreign-${suffix}`, title: "Foreign Pack", description: "Someone else's pack.", creatorId: users[1]!.id },
+      ]).returning({ id: schema.packs.id, slug: schema.packs.slug });
+      assert.ok(mine && draft && foreign);
+
+      const authorPerms = new Set<PermissionKey>(["pack.view", "pack.edit_own", "pack.submit", "download.use"]);
+      const author: Actor = { id: users[0]!.id, displayName: "Author 1", roleKey: "member", status: "active", banUntil: null, permissions: authorPerms };
+      const other: Actor = { id: users[1]!.id, displayName: "Author 2", roleKey: "member", status: "active", banUntil: null, permissions: authorPerms };
+      const noEdit: Actor = { ...author, permissions: new Set<PermissionKey>(["pack.view", "pack.submit"]) };
+      const viewer: Actor = { id: null, displayName: null, roleKey: "custom", status: "active", banUntil: null,
+        permissions: new Set<PermissionKey>(["pack.view", "download.use"]) };
+
+      // Downloads expose no target until the first version exists.
+      await assert.rejects(resolvePackDownload(db, viewer, mine.slug, { ip: "203.0.113.21", userAgent: "v1" }),
+        /İndirme bağlantısı bulunamadı/);
+
+      // First version becomes the single latest; values are normalized on the way in.
+      const v1 = await createPackVersion(db, author, mine.id, {
+        version: " 1.0.0 ", downloadUrl: "https://files.example.invalid/v1.zip",
+        fileSizeBytes: "2048", checksumSha256: "A".repeat(64), changelog: "  First drop  ",
+      });
+      assert.equal(v1.version, "1.0.0");
+      assert.equal(v1.isLatest, true);
+      assert.equal(v1.packSlug, mine.slug);
+      const [stored] = await tx.select().from(schema.packVersions).where(eq(schema.packVersions.id, v1.id));
+      assert.equal(stored?.checksumSha256, "a".repeat(64));
+      assert.equal(stored?.changelog, "First drop");
+      assert.equal(stored?.fileSizeBytes, 2048n);
+      assert.deepEqual(await resolvePackDownload(db, viewer, mine.slug, { ip: "203.0.113.21", userAgent: "v1" }),
+        { url: "https://files.example.invalid/v1.zip", counted: true, downloadCount: 1 });
+
+      // A newer version demotes the previous one; exactly one latest survives.
+      const v2 = await createPackVersion(db, author, mine.id,
+        { version: "1.1.0", downloadUrl: "https://files.example.invalid/v2.zip" });
+      assert.equal(v2.isLatest, true);
+      const detail = await getPublishedPack(db, mine.slug);
+      assert.ok(detail);
+      assert.equal(detail.versions.length, 2);
+      assert.equal(detail.versions[0]?.version, "1.1.0");
+      assert.equal(detail.versions[0]?.isLatest, true);
+      assert.equal(detail.versions[1]?.version, "1.0.0");
+      assert.equal(detail.versions[1]?.isLatest, false);
+      assert.equal(detail.latestVersion?.version, "1.1.0");
+      assert.deepEqual(await resolvePackDownload(db, viewer, mine.slug, { ip: "203.0.113.22", userAgent: "v2" }),
+        { url: "https://files.example.invalid/v2.zip", counted: true, downloadCount: 2 });
+
+      // Duplicates and malformed input are rejected without touching state.
+      await assert.rejects(createPackVersion(db, author, mine.id,
+        { version: "1.1.0", downloadUrl: "https://files.example.invalid/dup.zip" }), /zaten kayıtlı/);
+      await assert.rejects(createPackVersion(db, author, mine.id,
+        { version: "abc", downloadUrl: "https://files.example.invalid/x.zip" }), /biçim hatalı/);
+      await assert.rejects(createPackVersion(db, author, mine.id, { version: "2.0.0" }), /İndirme adresi zorunlu/);
+      await assert.rejects(createPackVersion(db, author, mine.id,
+        { version: "2.0.0", downloadUrl: "javascript:alert(1)" }), /http/);
+      await assert.rejects(createPackVersion(db, author, mine.id,
+        { version: "2.0.0", downloadUrl: "https://files.example.invalid/x.zip", fileSizeBytes: "-1" }), /1 TiB|arasında/);
+      await assert.rejects(createPackVersion(db, author, mine.id,
+        { version: "2.0.0", downloadUrl: "https://files.example.invalid/x.zip", checksumSha256: "beef" }), /64 hexadecimal/);
+
+      // Gates: only the own approved pack; owner scope and permission are enforced.
+      await assert.rejects(createPackVersion(db, author, draft.id,
+        { version: "1.0.0", downloadUrl: "https://files.example.invalid/d.zip" }), /yayındaki/);
+      await assert.rejects(createPackVersion(db, author, foreign.id,
+        { version: "1.0.0", downloadUrl: "https://files.example.invalid/f.zip" }), /bulunamadı/);
+      await assert.rejects(createPackVersion(db, author, `pk_missing_${suffix.slice(0, 6)}`,
+        { version: "1.0.0", downloadUrl: "https://files.example.invalid/m.zip" }), /bulunamadı/);
+      await assert.rejects(createPackVersion(db, noEdit, mine.id,
+        { version: "1.0.0", downloadUrl: "https://files.example.invalid/n.zip" }), /pack\.edit_own/);
+      await assert.rejects(createPackVersion(db, other, mine.id,
+        { version: "1.0.0", downloadUrl: "https://files.example.invalid/o.zip" }), /bulunamadı/);
+
+      // Failures left the latest pointer on v2 and audited exactly the two adds.
+      const finalLatest = await tx.select({ id: schema.packVersions.id }).from(schema.packVersions)
+        .where(and(eq(schema.packVersions.packId, mine.id), eq(schema.packVersions.isLatest, true)));
+      assert.equal(finalLatest.length, 1);
+      assert.equal(finalLatest[0]?.id, v2.id);
+      const audits = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
+        .where(eq(schema.auditLogs.targetId, mine.id));
+      assert.equal(audits.filter((row) => row.action === "pack.version_add").length, 2);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

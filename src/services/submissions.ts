@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { Database } from "@/db/connection";
 import * as s from "@/db/schema";
+import { validatePackVersion, type PackVersionInput } from "@/lib/pack-version";
 import { slugify } from "@/lib/utils";
 import {
   SubmissionError,
@@ -42,6 +43,15 @@ export type SubmissionDetail = SubmissionSummary & {
   sourceUrl: string | null;
   license: string | null;
   tagIds: string[];
+};
+
+export type PackVersionSummary = {
+  id: string;
+  packId: string;
+  packSlug: string;
+  version: string;
+  isLatest: boolean;
+  createdAt: Date;
 };
 
 export type SubmissionQueueItem = {
@@ -86,10 +96,19 @@ function gate(actor: Actor, permission: "pack.submit" | "pack.edit_own" | "submi
   return actor.id;
 }
 
+/** Drizzle sarmalayıcı (`DrizzleQueryError`) altındaki PostgreSQL kodunu bulur. */
+function hasPgCode(error: unknown, code: string): boolean {
+  let current: unknown = error;
+  for (let depth = 0; current && depth < 4; depth += 1) {
+    if ((current as { code?: unknown }).code === code) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 function mapConstraint(error: unknown): never {
   if (error instanceof SubmissionError) throw error;
-  const code = (error as { code?: unknown }).code;
-  if (code === "23505") {
+  if (hasPgCode(error, "23505")) {
     throw new SubmissionError("conflict", "Bu slug zaten kullanılıyor.", 409);
   }
   throw error;
@@ -384,6 +403,60 @@ export async function reviewSubmission(
     });
   } catch (error) {
     return mapConstraint(error);
+  }
+}
+
+/**
+ * Adds a new version to the actor's own approved pack.
+ * The new row becomes the single `isLatest` entry; downloads resolve through it.
+ */
+export async function createPackVersion(db: Database, actor: Actor, packId: string, input: PackVersionInput): Promise<PackVersionSummary> {
+  const actorId = gate(actor, "pack.edit_own");
+  const [pack] = await db
+    .select({ id: s.packs.id, slug: s.packs.slug, status: s.packs.status })
+    .from(s.packs)
+    .where(and(eq(s.packs.id, packId), eq(s.packs.creatorId, actorId), eq(s.packs.isDemo, false)))
+    .limit(1);
+  if (!pack) throw new SubmissionError("not_found", "Gönderi bulunamadı.", 404);
+  if (pack.status !== "approved") {
+    throw new SubmissionError("conflict", "Yeni sürüm yalnızca yayındaki paketlere eklenebilir.", 409);
+  }
+  const values = validatePackVersion(input);
+  try {
+    return await db.transaction(async (tx) => {
+      await tx.update(s.packVersions).set({ isLatest: false }).where(eq(s.packVersions.packId, pack.id));
+      const [created] = await tx.insert(s.packVersions).values({
+        packId: pack.id,
+        version: values.version,
+        downloadUrl: values.downloadUrl,
+        fileSizeBytes: values.fileSizeBytes,
+        checksumSha256: values.checksumSha256,
+        changelog: values.changelog,
+        isLatest: true,
+      }).returning();
+      if (!created) throw new Error("Version insert returned no row.");
+      await tx.insert(s.auditLogs).values({
+        actorId,
+        action: "pack.version_add",
+        targetType: "pack",
+        targetId: pack.id,
+        after: { versionId: created.id, version: created.version },
+      });
+      return {
+        id: created.id,
+        packId: pack.id,
+        packSlug: pack.slug,
+        version: created.version,
+        isLatest: created.isLatest,
+        createdAt: created.createdAt,
+      };
+    });
+  } catch (error) {
+    if (error instanceof SubmissionError) throw error;
+    if (hasPgCode(error, "23505")) {
+      throw new SubmissionError("conflict", "Bu sürüm numarası pakette zaten kayıtlı.", 409);
+    }
+    throw error;
   }
 }
 

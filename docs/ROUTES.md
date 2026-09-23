@@ -35,7 +35,7 @@
 | `/notifications`     | RSC+CA | member        | mark read                            |
 | `/submit`            | RSC+CA | `pack.submit` | create drafts + own submission list  |
 | `/submit/[id]`       | RSC+CA | author        | edit while `draft/changes_requested/rejected`, review note, submit/withdraw |
-| `/submit/new`        | RSC+CA | author        | new version for own pack             |
+| `/submit/new`        | RSC+CA | `pack.edit_own` | new version for own approved pack (single moving latest + `pack.version_add` audit) |
 
 ## Forum (public read, member write)
 
@@ -99,6 +99,7 @@ instead of a destructive row delete.
 | `/api/submissions`                    | GET/POST         | `pack.submit`   | own list / create draft            |
 | `/api/submissions/[id]`               | PATCH            | `pack.edit_own` + owner | edit while author-editable  |
 | `/api/submissions/[id]/status`        | POST             | `pack.submit` + owner | `submit`/`withdraw` transitions |
+| `/api/submissions/[id]/versions`      | POST             | `pack.edit_own` + owner | add version to own approved pack |
 | `/api/packs`                          | GET              | public          | listing (filters, sort, page)     |
 | `/api/packs/[slug]`                   | GET              | public          | detail                            |
 | `/api/admin/categories`               | GET/POST         | `category.manage` | list/create categories          |

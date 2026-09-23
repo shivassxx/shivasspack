@@ -414,5 +414,30 @@ pending locks, the note round-trip to the author, the moderator queue card
 versus the author's 403, resubmit clearing, approval with a live public
 detail, closed re-review and 409 locks on approved rows; temporary users,
 packs, categories, tags, sessions and audit rows were removed, leaving zero
-residue. `/submit/new` (a new version for an own approved pack) stays open in
-this phase.
+residue.
+
+The version slice closes Phase 8. `src/lib/pack-version.ts` validates a new
+version payload: a numeric semver-ish identifier with optional pre-release
+suffix, a mandatory http(s) download target (downloads resolve through the
+latest version, so the field cannot be empty), an optional 0-1 TiB byte size,
+an optional lowercase 64-hex SHA-256 checksum and a 5000-character changelog.
+`createPackVersion` in `src/services/submissions.ts` gates it behind
+`pack.edit_own`, an owner-scoped pack lookup (foreign/unknown packs answer
+404) and an `approved`-only status check (drafts answer 409). Inside one
+transaction it demotes every existing `is_latest`, inserts the new row as the
+single latest (the partial unique index backstops concurrent writers), writes
+a `pack.version_add` audit row and maps the `pack_version_number` duplicate to
+409 — reading the code from the drizzle `cause` chain, a fix the shared slug
+mapper learned too (its direct `.code` check never matched wrapped errors).
+Page `/submit/new` lists only the author's approved packs, accepts a `?pack=`
+deep link that falls back safely and shows an empty state without an approved
+pack; the `/submit` list and `/submit/[id]` header gained "Yeni sürüm" links
+for approved rows. API: `POST /api/submissions/[id]/versions` (201). The unit
+suite is now 112 tests (the version validators) and the PostgreSQL suite has
+33 (normalization, single moving latest, download flip, duplicates,
+validation, ownership/status/permission gates and the audit count).
+Standalone HTTP verified guest redirect/401 gates, the picker contents and
+deep-link fallback, the 404-before/302-after download switch, version one and
+two with `latestVersion` updates on the public API, every 400/404/409
+rejection, the list/editor links and the audit rows; temporary users, packs,
+versions, downloads and audit rows were removed, leaving zero residue.

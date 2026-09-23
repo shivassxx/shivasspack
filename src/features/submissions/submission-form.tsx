@@ -174,6 +174,77 @@ export function SubmissionEditor({ initial, categories, tags }: {
   );
 }
 
+export function VersionCreateForm({ packs, initialPackId }: {
+  packs: { id: string; slug: string; title: string }[];
+  initialPackId?: string;
+}) {
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
+  if (packs.length === 0) return null;
+  const defaultId = initialPackId && packs.some((pack) => pack.id === initialPackId) ? initialPackId : packs[0]!.id;
+  return (
+    <form
+      id="version-create-form"
+      aria-label="Yeni sürüm"
+      className="rounded-xl border border-line bg-surface-900 p-5"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const data = new FormData(form);
+        const packId = String(data.get("packId") ?? "");
+        setPending(true);
+        void (async () => {
+          const result = await requestJson<{ version: { packSlug: string; version: string } }>(
+            `/api/submissions/${encodeURIComponent(packId)}/versions`,
+            {
+              method: "POST",
+              body: {
+                version: String(data.get("version") ?? ""),
+                downloadUrl: String(data.get("downloadUrl") ?? ""),
+                fileSizeBytes: String(data.get("fileSizeBytes") ?? ""),
+                checksumSha256: String(data.get("checksumSha256") ?? ""),
+                changelog: String(data.get("changelog") ?? ""),
+              },
+            },
+          );
+          setPending(false);
+          if (!result.ok) {
+            toast.error(result.message);
+            return;
+          }
+          toast.success(`${result.data.version.version} sürümü eklendi.`);
+          router.push(`/packs/${result.data.version.packSlug}`);
+          router.refresh();
+        })();
+      }}
+    >
+      <h2 className="text-base font-semibold text-white">Yayındaki pakete yeni sürüm</h2>
+      <p className="mt-1 text-xs leading-5 text-zinc-500">
+        Eklenen sürüm tek güncel kayıt olur; indirme hedefi ve sürüm listesi bu adrese geçer.
+      </p>
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <select name="packId" required disabled={pending} defaultValue={defaultId}
+          className={inputClass} aria-label="Paket">
+          {packs.map((pack) => <option key={pack.id} value={pack.id}>{pack.title}</option>)}
+        </select>
+        <input name="version" required maxLength={40} placeholder="Sürüm (örn. 1.0.0)" disabled={pending}
+          className={inputClass} aria-label="Sürüm numarası" />
+        <input name="downloadUrl" type="url" required maxLength={2048} placeholder="https://…/paket.zip"
+          disabled={pending} className={inputClass} aria-label="İndirme adresi" />
+        <input name="fileSizeBytes" type="number" min={0} step={1} placeholder="Boyut (bayt, isteğe bağlı)"
+          disabled={pending} className={inputClass} aria-label="Dosya boyutu" />
+        <input name="checksumSha256" maxLength={64} placeholder="SHA-256 (64 karakter, isteğe bağlı)"
+          disabled={pending} className={`${inputClass} lg:col-span-2 font-mono`} aria-label="SHA-256" />
+        <textarea name="changelog" maxLength={5000} placeholder="Değişiklik notu (isteğe bağlı)"
+          disabled={pending} className={`${textAreaClass} lg:col-span-2`} aria-label="Değişiklik notu" />
+      </div>
+      <button type="submit" disabled={pending} className={`${primaryButton} mt-4`}>
+        {pending ? "Ekleniyor…" : "Sürümü ekle"}
+      </button>
+    </form>
+  );
+}
+
 export function SubmissionReviewItem({ item }: {
   item: { id: string; title: string; excerpt: string; authorName: string; authorUsername: string; updatedAt: string };
 }) {
