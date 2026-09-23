@@ -6,6 +6,7 @@ import {
   eq,
   inArray,
   lte,
+  ne,
   sql,
   type SQL,
 } from "drizzle-orm";
@@ -71,8 +72,20 @@ export type PublicCategory = {
   packCount: number;
 };
 
+export type PackVersionEntry = {
+  id: string;
+  version: string;
+  changelog: string | null;
+  fileSizeBytes: string | null;
+  checksumSha256: string | null;
+  isLatest: boolean;
+  createdAt: Date;
+};
+
 export type PackDetail = PackListItem & {
   description: string;
+  installGuide: string | null;
+  categoryId: string;
   publisher: string | null;
   sourceType: (typeof s.sourceType.enumValues)[number];
   sourceUrl: string | null;
@@ -83,7 +96,9 @@ export type PackDetail = PackListItem & {
   videoUrl: string | null;
   bookmarkCount: number;
   commentCount: number;
+  updatedAt: Date;
   latestVersion: { version: string; changelog: string | null; publishedAt: Date | null } | null;
+  versions: PackVersionEntry[];
 };
 
 function normalizeFilters(filters: PublicPackFilters) {
@@ -276,6 +291,8 @@ export async function getPublishedPack(db: Database, slug: string): Promise<Pack
     .select({
       ...listSelection,
       description: s.packs.description,
+      installGuide: s.packs.installGuide,
+      categoryId: s.packs.categoryId,
       publisher: s.packs.publisher,
       sourceType: s.packs.sourceType,
       sourceUrl: s.packs.sourceUrl,
@@ -286,6 +303,7 @@ export async function getPublishedPack(db: Database, slug: string): Promise<Pack
       videoUrl: s.packs.videoUrl,
       bookmarkCount: s.packs.bookmarkCount,
       commentCount: s.packs.commentCount,
+      updatedAt: s.packs.updatedAt,
     })
     .from(s.packs)
     .innerJoin(s.packCategories, eq(s.packCategories.id, s.packs.categoryId))
@@ -296,16 +314,67 @@ export async function getPublishedPack(db: Database, slug: string): Promise<Pack
   const [tagsByPack, versions] = await Promise.all([
     loadTags(db, [row.id]),
     db
-      .select({ version: s.packVersions.version, changelog: s.packVersions.changelog, publishedAt: s.packVersions.publishedAt })
+      .select({
+        id: s.packVersions.id,
+        version: s.packVersions.version,
+        changelog: s.packVersions.changelog,
+        fileSizeBytes: s.packVersions.fileSizeBytes,
+        checksumSha256: s.packVersions.checksumSha256,
+        isLatest: s.packVersions.isLatest,
+        createdAt: s.packVersions.createdAt,
+        publishedAt: s.packVersions.publishedAt,
+      })
       .from(s.packVersions)
-      .where(and(eq(s.packVersions.packId, row.id), eq(s.packVersions.isLatest, true)))
-      .limit(1),
+      .where(and(eq(s.packVersions.packId, row.id), eq(s.packVersions.isDemo, false)))
+      .orderBy(desc(s.packVersions.isLatest), desc(s.packVersions.createdAt), desc(s.packVersions.id)),
   ]);
+  const [latest] = versions;
   return {
     ...row,
     fileSizeBytes: row.fileSizeBytes?.toString() ?? null,
     publishedAt: row.publishedAt,
     tags: tagsByPack.get(row.id) ?? [],
-    latestVersion: versions[0] ?? null,
+    latestVersion: latest
+      ? { version: latest.version, changelog: latest.changelog, publishedAt: latest.publishedAt }
+      : null,
+    versions: versions.map((version) => ({
+      id: version.id,
+      version: version.version,
+      changelog: version.changelog,
+      fileSizeBytes: version.fileSizeBytes?.toString() ?? null,
+      checksumSha256: version.checksumSha256,
+      isLatest: version.isLatest,
+      createdAt: version.createdAt,
+    })),
   };
+}
+
+/** Same-category approved packs for the detail page, most downloaded first. */
+export async function getRelatedPacks(
+  db: Database,
+  categoryId: string,
+  excludePackId: string,
+  limit = 4,
+): Promise<PackListItem[]> {
+  const size = Math.max(1, Math.min(12, limit));
+  const where = and(
+    ...publicConditions(new Date(), normalizeFilters({})),
+    eq(s.packs.categoryId, categoryId),
+    ne(s.packs.id, excludePackId),
+  );
+  const items = await db
+    .select(listSelection)
+    .from(s.packs)
+    .innerJoin(s.packCategories, eq(s.packCategories.id, s.packs.categoryId))
+    .innerJoin(s.users, eq(s.users.id, s.packs.creatorId))
+    .where(where)
+    .orderBy(desc(s.packs.downloadCount), desc(s.packs.publishedAt), asc(s.packs.id))
+    .limit(size);
+  const tagsByPack = await loadTags(db, items.map((item) => item.id));
+  return items.map((item) => ({
+    ...item,
+    fileSizeBytes: item.fileSizeBytes?.toString() ?? null,
+    publishedAt: item.publishedAt!,
+    tags: tagsByPack.get(item.id) ?? [],
+  }));
 }

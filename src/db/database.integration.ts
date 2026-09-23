@@ -22,6 +22,7 @@ import { can, type Actor, type PermissionKey } from "../services/rbac";
 import { consumeRateLimit } from "../services/rate-limit";
 import {
   getPublishedPack,
+  getRelatedPacks,
   listPublicCategories,
   listPublishedPacks,
 } from "../services/packs/public";
@@ -1118,6 +1119,86 @@ test("downloads resolve sources, rate-limit, count once per identity and keep me
       assert.equal(secondHistory.items[1]?.title, "Download Test Pack One");
       assert.equal(secondHistory.items[1]?.mirror, "US-Mirror");
       assert.equal((await getMemberDownloadHistory(db, viewer(users[1]!.id), 99)).page, 1);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("detail exposes install guide, ordered version history and related packs", async () => {
+  const rollback = new Error("ROLLBACK_PACK_DETAIL_CONTENT_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const [user] = await tx.insert(schema.users).values({ username: `detail-${suffix}`, displayName: "Detail Author",
+        email: `detail-${suffix}@example.invalid`, roleId: role.id }).returning({ id: schema.users.id });
+      const [category] = await tx.insert(schema.packCategories).values({ slug: `detail-${suffix}`,
+        name: "Detail Category", kind: "graphics" }).returning({ id: schema.packCategories.id });
+      const [otherCategory] = await tx.insert(schema.packCategories).values({ slug: `detail-other-${suffix}`,
+        name: "Other Category", kind: "pvp" }).returning({ id: schema.packCategories.id });
+      assert.ok(user && category && otherCategory);
+      const base = { excerpt: "A public package", categoryId: category.id, creatorId: user.id,
+        publishedAt: new Date(Date.now() - 60000) };
+      const guide = "1. Dosyayi indir\n2. Klasore kopyala\n3. Fivem'i yeniden baslat";
+      const [main, relatedHigh, relatedLow, draftPack, archived, foreign] = await tx.insert(schema.packs).values([
+        { ...base, slug: `detail-main-${suffix}`, title: "Detail Main Pack", description: "Main pack for detail content.",
+          status: "approved", installGuide: guide, publishedAt: new Date(Date.now() - 4 * 86400000) },
+        { ...base, slug: `detail-high-${suffix}`, title: "Related High", description: "Most downloaded related pack.",
+          status: "approved", downloadCount: 40, publishedAt: new Date(Date.now() - 86400000) },
+        { ...base, slug: `detail-low-${suffix}`, title: "Related Low", description: "Least downloaded related pack.",
+          status: "approved", downloadCount: 5, publishedAt: new Date(Date.now() - 2 * 86400000) },
+        { ...base, slug: `detail-draft-${suffix}`, title: "Draft Pack", description: "Draft stays hidden.",
+          status: "draft", publishedAt: null },
+        { ...base, slug: `detail-archived-${suffix}`, title: "Archived Pack", description: "Archived stays hidden.",
+          status: "archived", publishedAt: new Date(Date.now() - 86400000) },
+        { excerpt: "Another category", slug: `detail-foreign-${suffix}`, title: "Foreign Pack",
+          description: "Approved but in a different category.", categoryId: otherCategory.id, creatorId: user.id,
+          status: "approved", publishedAt: new Date(Date.now() - 86400000) },
+      ]).returning({ id: schema.packs.id, slug: schema.packs.slug });
+      assert.ok(main && relatedHigh && relatedLow && draftPack && archived && foreign);
+      await tx.insert(schema.packVersions).values([
+        { packId: main.id, version: "1.0.0", changelog: "Initial release", fileSizeBytes: 12345n,
+          checksumSha256: "a".repeat(64) },
+        { packId: main.id, version: "2.0.0", isLatest: true, changelog: "Improved lighting", fileSizeBytes: 23456n },
+        { packId: main.id, version: "3.0.0-demo", isLatest: false, isDemo: true },
+      ]);
+      const detail = await getPublishedPack(db, main.slug);
+      assert.ok(detail);
+      assert.equal(detail.installGuide, guide);
+      assert.equal(detail.versions.length, 2);
+      assert.equal(detail.versions[0]?.version, "2.0.0");
+      assert.equal(detail.versions[0]?.isLatest, true);
+      assert.equal(detail.versions[1]?.fileSizeBytes, "12345");
+      assert.equal(detail.versions[1]?.checksumSha256, "a".repeat(64));
+      assert.equal(detail.latestVersion?.version, "2.0.0");
+      assert.ok(!detail.versions.some((version) => version.version.includes("demo")));
+
+      const related = await getRelatedPacks(db, detail.categoryId, detail.id);
+      assert.deepEqual(related.map((item) => item.slug), [relatedHigh.slug, relatedLow.slug]);
+      assert.ok(!related.some((item) => [main.slug, draftPack.slug, archived.slug, foreign.slug].includes(item.slug)));
+      assert.equal((await getRelatedPacks(db, detail.categoryId, detail.id, 1)).length, 1);
+
+      const adminActor = (permissions: PermissionKey[]): Actor => ({
+        id: user.id, displayName: "Detail Author", roleKey: "custom", status: "active", banUntil: null,
+        permissions: new Set<PermissionKey>(permissions),
+      });
+      await assert.rejects(updateAdminPack(db, adminActor(["pack.manage"]), main.id, { installGuide: "kisa" }),
+        /Kurulum rehberi 10-50000/);
+      await assert.rejects(updateAdminPack(db, adminActor(["pack.view"]), main.id, { installGuide: guide }),
+        /Missing permission: pack.manage/);
+      const updatedGuide = "Yeni rehber: dosyalari C:\\packs dizinine kopyala ve istemciyi yeniden baslat.";
+      const updated = await updateAdminPack(db, adminActor(["pack.manage"]), main.id, { installGuide: updatedGuide });
+      assert.equal(updated.installGuide, updatedGuide);
+      assert.equal((await getPublishedPack(db, main.slug))?.installGuide, updatedGuide);
+      const cleared = await updateAdminPack(db, adminActor(["pack.manage"]), main.id, { installGuide: "" });
+      assert.equal(cleared.installGuide, null);
+      assert.equal((await getPublishedPack(db, main.slug))?.installGuide, null);
+      // Database-level guard matches the service validation.
+      await assert.rejects(tx.insert(schema.packs).values({ slug: `detail-short-${suffix}`, title: "Short Guide",
+        excerpt: "Guide check", description: "Pack with an invalid install guide value.", categoryId: category.id,
+        creatorId: user.id, status: "draft", installGuide: "abcde" }));
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

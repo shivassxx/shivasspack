@@ -12,6 +12,7 @@ type Pack = {
   title: string;
   excerpt: string;
   description: string;
+  installGuide: string | null;
   categoryId: string;
   categoryName: string;
   creatorName: string;
@@ -53,6 +54,7 @@ function editPayload(data: FormData, canFeature: boolean) {
   const payload: Record<string, unknown> = {
     title: data.get("title"), slug: data.get("slug"), categoryId: data.get("categoryId"),
     excerpt: data.get("excerpt"), description: data.get("description"), status: data.get("status"),
+    installGuide: data.get("installGuide"),
     publisher: data.get("publisher"), sourceType: data.get("sourceType"), sourceUrl: data.get("sourceUrl"),
     license: data.get("license"), distributionPermission: data.get("distributionPermission"),
     performanceImpact: data.get("performanceImpact"), compatibility: String(data.get("compatibility") ?? "").split(",").map((item) => item.trim()).filter(Boolean),
@@ -139,6 +141,7 @@ export function PackManager({
               <select name="categoryId" defaultValue={pack.categoryId} className={inputClass} aria-label="Kategori">{categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
               <textarea name="excerpt" required minLength={10} maxLength={300} defaultValue={pack.excerpt} className={textAreaClass} aria-label="Özet" />
               <textarea name="description" required minLength={20} maxLength={50000} defaultValue={pack.description} className={`${textAreaClass} lg:col-span-2`} aria-label="Açıklama" />
+              <textarea name="installGuide" maxLength={50000} defaultValue={pack.installGuide ?? ""} placeholder="Kurulum rehberi (isteğe bağlı, en az 10 karakter)" className={`${textAreaClass} lg:col-span-2`} aria-label="Kurulum rehberi" />
               <select name="status" defaultValue={pack.status} className={inputClass} aria-label="Durum">
                 {(["draft", "pending", "changes_requested", "rejected", "archived", ...(canPublish || pack.status === "approved" ? ["approved"] : [])] as const).map((status) => <option key={status}>{status}</option>)}
               </select>

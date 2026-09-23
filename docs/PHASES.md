@@ -349,3 +349,19 @@ consistency, visibility gates and history isolation. Standalone HTTP confirmed
 10/hour 429 with Retry-After, detail CTAs, the member history page and the
 archive freeze; temporary rows were removed through the migrator role because
 `downloads` is append-only for the app role, leaving zero residue.
+
+The Phase 7 content block adds real detail-page substance without fake data.
+Migration `0001` adds nullable `packs.install_guide` with a 10-50000 character
+check; both the admin pack form and `updateAdminPack` validate it (empty clears
+it) and the DB guard rejects short direct writes. `getPublishedPack` now
+returns the full non-demo version history (latest first with size, checksum,
+changelog and date) plus the guide, and the page renders a Kurulum section, a
+Sürümler list, and an Ilgili paketler grid from `getRelatedPacks`: approved
+non-demo packs in the same enabled category, excluding the current pack, most
+downloaded first, at most four. A schema.org SoftwareApplication JSON-LD block
+carries title, canonical URL, creator, dates, version and aggregate rating;
+every `<` is escaped so user text can never break out of the script element.
+Gallery screenshots stay deferred with the S3/file-upload phase. The unit
+suite is now 103 tests and the real PostgreSQL suite has 30, covering guide
+validation/clearing, permission gates, version demo exclusion and ordering,
+related-pack visibility and ordering, and the DB length check.

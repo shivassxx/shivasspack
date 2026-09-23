@@ -1,0 +1,2 @@
+ALTER TABLE "packs" ADD COLUMN "install_guide" text;--> statement-breakpoint
+ALTER TABLE "packs" ADD CONSTRAINT "pack_install_guide" CHECK ("packs"."install_guide" IS NULL OR char_length("packs"."install_guide") BETWEEN 10 AND 50000);

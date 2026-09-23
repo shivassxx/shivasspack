@@ -310,6 +310,7 @@ export const packs = pgTable(
     title: text("title").notNull(),
     excerpt: text("excerpt").notNull(),
     description: text("description").notNull(),
+    installGuide: text("install_guide"),
     categoryId: text("category_id")
       .notNull()
       .references(() => packCategories.id, { onDelete: "restrict" }),
@@ -353,6 +354,10 @@ export const packs = pgTable(
   (t) => [
     check("pack_slug", slugCheck(t.slug)),
     check("pack_size", sql`${t.fileSizeBytes} IS NULL OR ${t.fileSizeBytes} >= 0`),
+    check(
+      "pack_install_guide",
+      sql`${t.installGuide} IS NULL OR char_length(${t.installGuide}) BETWEEN 10 AND 50000`,
+    ),
     check(
       "pack_counters",
       sql`${t.downloadCount} >= 0 AND ${t.viewCount} >= 0 AND ${t.likeCount} >= 0 AND ${t.bookmarkCount} >= 0 AND ${t.commentCount} >= 0 AND ${t.ratingCount} >= 0`,

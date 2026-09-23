@@ -20,6 +20,7 @@ export type AdminPackInput = {
   title?: unknown;
   excerpt?: unknown;
   description?: unknown;
+  installGuide?: unknown;
   categoryId?: unknown;
   publisher?: unknown;
   isKnown?: unknown;
@@ -75,6 +76,12 @@ function optionalUrl(value: unknown, label: string): string | null {
   } catch {
     throw new PackAdminError("validation", `${label} geçerli bir HTTP(S) adresi olmalı.`, 400);
   }
+}
+
+/** Empty clears the guide; non-empty must match the DB check (10..50000). */
+function optionalGuide(value: unknown): string | null {
+  if (value === null || value === "" || value === undefined) return null;
+  return cleanText(value, "Kurulum rehberi", 10, 50_000);
 }
 
 function enumValue<T extends string>(value: unknown, allowed: Set<string>, label: string): T {
@@ -162,6 +169,7 @@ export async function listAdminPacks(db: Database, actor: Actor) {
       title: s.packs.title,
       excerpt: s.packs.excerpt,
       description: s.packs.description,
+      installGuide: s.packs.installGuide,
       categoryId: s.packs.categoryId,
       categoryName: s.packCategories.name,
       creatorName: s.users.displayName,
@@ -208,6 +216,7 @@ function createValues(actorId: string, input: AdminPackInput) {
       title: cleanText(input.title, "Başlık", 3, 120),
       excerpt: cleanText(input.excerpt, "Özet", 10, 300),
       description: cleanText(input.description, "Açıklama", 20, 50_000),
+      installGuide: optionalGuide(input.installGuide),
       categoryId,
       creatorId: actorId,
       publisher: optionalText(input.publisher, "Yayıncı", 120),
@@ -263,6 +272,7 @@ export async function updateAdminPack(db: Database, actor: Actor, id: string, in
   if (input.title !== undefined) patch.title = cleanText(input.title, "Başlık", 3, 120);
   if (input.excerpt !== undefined) patch.excerpt = cleanText(input.excerpt, "Özet", 10, 300);
   if (input.description !== undefined) patch.description = cleanText(input.description, "Açıklama", 20, 50_000);
+  if (input.installGuide !== undefined) patch.installGuide = optionalGuide(input.installGuide);
   if (input.categoryId !== undefined) patch.categoryId = cleanText(input.categoryId, "Kategori", 1, 128);
   if (input.publisher !== undefined) patch.publisher = optionalText(input.publisher, "Yayıncı", 120);
   if (input.isKnown !== undefined) patch.isKnown = booleanValue(input.isKnown, "isKnown");

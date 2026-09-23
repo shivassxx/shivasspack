@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Bookmark, Download, Eye, Heart, ShieldCheck, Star } from "lucide-react";
 import { getDatabase } from "@/db/client";
 import { BookmarkButton } from "@/features/packs/bookmark-button";
+import { PackCard } from "@/features/packs/pack-card";
 import { CommentForm } from "@/features/packs/comment-form";
 import { LikeButton } from "@/features/packs/like-button";
 import { RatingControl } from "@/features/packs/rating-control";
@@ -14,7 +15,9 @@ import { listPackComments } from "@/services/packs/comments";
 import { getPackDownloadOptions } from "@/services/packs/downloads";
 import { getPackLikeState } from "@/services/packs/likes";
 import { getMemberRating } from "@/services/packs/ratings";
-import { getPublishedPack } from "@/services/packs/public";
+import { getPublishedPack, getRelatedPacks } from "@/services/packs/public";
+import { buildPackJsonLd } from "@/services/packs/seo";
+import { publicEnv } from "@/lib/public-env";
 import { assertActive } from "@/services/rbac";
 import { formatBytes, formatCompact, formatDate } from "@/lib/utils";
 
@@ -62,6 +65,19 @@ export default async function PackDetailPage({ params, searchParams }: {
   }
   const comments = await listPackComments(getDatabase().db, slug, Number(query.commentsPage ?? 1));
   const downloadOptions = await getPackDownloadOptions(getDatabase().db, slug);
+  const related = await getRelatedPacks(getDatabase().db, pack.categoryId, pack.id);
+  const jsonLd = buildPackJsonLd({
+    siteUrl: publicEnv.siteUrl,
+    slug: pack.slug,
+    title: pack.title,
+    excerpt: pack.excerpt,
+    creatorName: pack.creatorName,
+    publishedAt: pack.publishedAt,
+    modifiedAt: pack.updatedAt,
+    softwareVersion: pack.latestVersion?.version ?? null,
+    ratingValue: pack.ratingCount > 0 ? pack.ratingAvg : null,
+    ratingCount: pack.ratingCount,
+  });
   const [isSaved, isLiked, myRating] = canInteract ? await Promise.all([
     getBookmarkState(getDatabase().db, session!.actor, pack.id),
     getPackLikeState(getDatabase().db, session!.actor, pack.id),
@@ -75,6 +91,7 @@ export default async function PackDetailPage({ params, searchParams }: {
   return (
     <article className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6">
       <ViewTracker slug={pack.slug} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
       <nav aria-label="İçerik yolu" className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
         <Link href="/packs" className="hover:text-accent-400">Paketler</Link>
         <span aria-hidden>/</span>
@@ -154,13 +171,40 @@ export default async function PackDetailPage({ params, searchParams }: {
         <section aria-labelledby="description-heading">
           <h2 id="description-heading" className="text-xl font-semibold text-white">Paket hakkında</h2>
           <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-zinc-400">{pack.description}</div>
-          {pack.latestVersion?.changelog ? <div className="mt-8"><h2 className="text-lg font-semibold text-white">Son sürüm notları</h2><p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-zinc-400">{pack.latestVersion.changelog}</p></div> : null}
+          {pack.installGuide ? <section aria-labelledby="install-heading" className="mt-8">
+            <h2 id="install-heading" className="text-lg font-semibold text-white">Kurulum</h2>
+            <div className="mt-3 whitespace-pre-wrap rounded-xl border border-line bg-surface-900 p-4 text-sm leading-7 text-zinc-300">{pack.installGuide}</div>
+          </section> : null}
+          {pack.versions.length ? <section aria-labelledby="versions-heading" className="mt-8">
+            <h2 id="versions-heading" className="text-lg font-semibold text-white">Sürümler ({pack.versions.length})</h2>
+            <ol className="mt-3 space-y-3">
+              {pack.versions.map((version) => <li key={version.id} className="rounded-xl border border-line bg-surface-900 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-mono text-sm font-semibold text-white">{version.version}
+                    {version.isLatest ? <span className="ml-2 rounded-full bg-accent-600 px-2 py-0.5 font-sans text-[11px] font-semibold text-white">güncel</span> : null}
+                  </span>
+                  <time dateTime={version.createdAt.toISOString()} className="text-xs text-zinc-500">{formatDate(version.createdAt)}</time>
+                </div>
+                {version.changelog ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-zinc-400">{version.changelog}</p> : null}
+                <p className="mt-2 flex flex-wrap gap-x-4 text-xs text-zinc-500">
+                  {version.fileSizeBytes ? <span>{formatBytes(Number(version.fileSizeBytes))}</span> : null}
+                  {version.checksumSha256 ? <span className="font-mono">SHA-256 {version.checksumSha256.slice(0, 16)}…</span> : null}
+                </p>
+              </li>)}
+            </ol>
+          </section> : null}
         </section>
         <aside className="space-y-6">
           {pack.compatibility.length > 0 ? <section><h2 className="text-sm font-semibold text-white">Uyumluluk</h2><ul className="mt-3 space-y-2 text-sm text-zinc-400">{pack.compatibility.map((item) => <li key={item}>• {item}</li>)}</ul></section> : null}
           {requirements.length > 0 ? <section><h2 className="text-sm font-semibold text-white">Gereksinimler</h2><dl className="mt-3 space-y-2 text-sm">{requirements.map(([key, value]) => <div key={key} className="flex justify-between gap-3"><dt className="text-zinc-500">{key}</dt><dd className="text-right text-zinc-300">{String(value)}</dd></div>)}</dl></section> : null}
         </aside>
       </div>
+      {related.length ? <section aria-labelledby="related-heading" className="border-t border-line py-9">
+        <h2 id="related-heading" className="text-xl font-semibold text-white">İlgili paketler</h2>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {related.map((item) => <PackCard key={item.id} pack={item} />)}
+        </div>
+      </section> : null}
       <section id="comments" aria-labelledby="comments-heading" className="border-t border-line py-9">
         <h2 id="comments-heading" className="text-xl font-semibold text-white">Yorumlar ({comments.total})</h2>
         {canInteract ? <CommentForm slug={pack.slug} /> : session
