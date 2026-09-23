@@ -41,8 +41,8 @@ import {
   listAdminPacks,
   updateAdminPack,
 } from "../services/admin/packs";
-import { listAdminHomepageSections, listHomepageSections, updateHomepageSections } from "../services/homepage";
-import { getAdminRegistrationSetting, readSiteName, registrationEnabled, updateRegistrationSetting, updateSiteName } from "../services/admin/settings";
+import { defaultHero, listAdminHomepageSections, listHomepageSections, updateHomepageSections } from "../services/homepage";
+import { getAdminRegistrationSetting, getAdminSiteDescription, readSiteDescription, readSiteName, registrationEnabled, updateRegistrationSetting, updateSiteDescription, updateSiteName } from "../services/admin/settings";
 import { createAdminRole, listAdminRoles, updateAdminRole } from "../services/admin/roles";
 import { assignUserRole, listAdminUsers } from "../services/admin/users";
 import { loadActor } from "../services/rbac";
@@ -1010,6 +1010,56 @@ test("site name changes are permission-gated, visible and audited", async () => 
       assert.equal(audit?.action, "site_setting.update");
       assert.equal(audit.targetId, "site_name");
       assert.equal(audit.after?.value, "Test Hub");
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("site description is live, validates content and audits changes", async () => {
+  const rollback = new Error("ROLLBACK_SITE_DESCRIPTION_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "admin"));
+      assert.ok(role);
+      const [user] = await tx.insert(schema.users).values({
+        username: `sitedesc-${suffix}`, displayName: "Description Editor",
+        email: `sitedesc-${suffix}@example.invalid`, roleId: role.id,
+      }).returning({ id: schema.users.id });
+      assert.ok(user);
+      const actor: Actor = { id: user.id, displayName: "Description Editor", roleKey: "custom", status: "active",
+        banUntil: null, permissions: new Set(["admin.settings"]) };
+      const denied: Actor = { ...actor, permissions: new Set() };
+      await assert.rejects(getAdminSiteDescription(db, denied), /Missing permission/);
+      await assert.rejects(updateSiteDescription(db, denied, "Uzun bir açıklama olmalı ve kimse güncelleyememeli."), /Missing permission/);
+      await assert.rejects(updateSiteDescription(db, actor, "kısa"), /20-320/);
+      await assert.rejects(updateSiteDescription(db, actor, "Görünmez\u0000 karakter içeren açıklama metni"), /20-320/);
+      const before = await readSiteDescription(db);
+      const [heroRow] = await tx.select({ config: schema.homepageSections.config }).from(schema.homepageSections)
+        .where(eq(schema.homepageSections.key, "hero"));
+      assert.ok(heroRow);
+      await tx.update(schema.homepageSections).set({ config: { ...heroRow.config,
+        hero: { ...defaultHero, description: defaultHero.description } } }).where(eq(schema.homepageSections.key, "hero"));
+      const result = await updateSiteDescription(db, actor, "  Yeni   grafik paketleri ve uyumluluk rehberi burada.  ");
+      assert.equal(result.description, "Yeni grafik paketleri ve uyumluluk rehberi burada.");
+      assert.equal(await readSiteDescription(db), result.description);
+      assert.equal(await getAdminSiteDescription(db, actor), result.description);
+      assert.equal((await listHomepageSections(db)).find((section) => section.key === "hero")?.hero?.description, result.description);
+      await tx.update(schema.homepageSections).set({ config: { ...heroRow.config,
+        hero: { ...defaultHero, description: "Özel karşılama açıklaması saklanır." } } }).where(eq(schema.homepageSections.key, "hero"));
+      assert.equal((await listHomepageSections(db)).find((section) => section.key === "hero")?.hero?.description,
+        "Özel karşılama açıklaması saklanır.");
+      assert.notEqual(before, result.description);
+      assert.deepEqual(await updateSiteDescription(db, actor, result.description), result);
+      const audit = await tx.select({ action: schema.auditLogs.action, targetId: schema.auditLogs.targetId,
+        before: schema.auditLogs.before, after: schema.auditLogs.after })
+        .from(schema.auditLogs).where(eq(schema.auditLogs.actorId, user.id));
+      assert.equal(audit.length, 1);
+      assert.equal(audit[0]?.action, "site_setting.update");
+      assert.equal(audit[0]?.targetId, "site_description");
+      assert.equal(audit[0]?.before?.value, before);
+      assert.equal(audit[0]?.after?.value, result.description);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

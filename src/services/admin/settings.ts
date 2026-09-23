@@ -6,6 +6,7 @@ import { assertActive, requirePermission, type Actor } from "@/services/rbac";
 
 const registrationKey = "registrations_enabled";
 const siteNameKey = "site_name";
+const siteDescriptionKey = "site_description";
 
 export class SettingsError extends Error {
   constructor(readonly code: "validation" | "conflict", message: string, readonly status: number) {
@@ -27,6 +28,13 @@ export async function readSiteName(db: Database): Promise<string> {
     ? setting.value : siteConfig.name;
 }
 
+export async function readSiteDescription(db: Database): Promise<string> {
+  const [setting] = await db.select({ value: s.siteSettings.value }).from(s.siteSettings)
+    .where(eq(s.siteSettings.key, siteDescriptionKey));
+  return typeof setting?.value === "string" && setting.value.trim()
+    ? setting.value : siteConfig.description;
+}
+
 export async function getAdminRegistrationSetting(db: Database, actor: Actor) {
   assertActive(actor);
   requirePermission(actor, "admin.settings");
@@ -37,6 +45,36 @@ export async function getAdminSiteName(db: Database, actor: Actor) {
   assertActive(actor);
   requirePermission(actor, "admin.settings");
   return readSiteName(db);
+}
+
+export async function getAdminSiteDescription(db: Database, actor: Actor) {
+  assertActive(actor);
+  requirePermission(actor, "admin.settings");
+  return readSiteDescription(db);
+}
+
+export async function updateSiteDescription(db: Database, actor: Actor, value: unknown) {
+  assertActive(actor);
+  requirePermission(actor, "admin.settings");
+  const description = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+  if (description.length < 20 || description.length > 320 || /[\p{Cc}\p{Cf}]/u.test(description)) {
+    throw new SettingsError("validation", "Site açıklaması 20-320 görünür karakter olmalı.", 400);
+  }
+  if (!actor.id) throw new SettingsError("validation", "Geçersiz aktör.", 400);
+  return db.transaction(async (tx) => {
+    const [before] = await tx.select({ value: s.siteSettings.value }).from(s.siteSettings)
+      .where(eq(s.siteSettings.key, siteDescriptionKey)).for("update");
+    if (before?.value === description) return { description };
+    const [updated] = before
+      ? await tx.update(s.siteSettings).set({ value: description, updatedById: actor.id })
+        .where(eq(s.siteSettings.key, siteDescriptionKey)).returning({ value: s.siteSettings.value })
+      : await tx.insert(s.siteSettings).values({ key: siteDescriptionKey, value: description, updatedById: actor.id })
+        .returning({ value: s.siteSettings.value });
+    await tx.insert(s.auditLogs).values({ actorId: actor.id, action: "site_setting.update",
+      targetType: "site_setting", targetId: siteDescriptionKey,
+      before: before ?? { value: siteConfig.description }, after: updated });
+    return { description };
+  });
 }
 
 export async function updateSiteName(db: Database, actor: Actor, value: unknown) {

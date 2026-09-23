@@ -252,3 +252,19 @@ is required. Local verification: 100 unit tests and 22 PostgreSQL tests.
 Standalone production HTTP verified 401/400 responses, the editor HTML,
 live hero/headline display and real CTA link, and the audit row. The original
 section config/order/visibility and test account/session/audit were restored.
+
+### Site description setting (2026-09-23)
+
+`/admin/settings` also manages `site_description` (20-320 characters). It is
+reflected on the next request in the default/Open Graph/Twitter description,
+footer and inherited homepage hero copy. A separately customized hero
+description stays independent. The setting is seeded idempotently, existing
+database deployments fall back to the original description until seeded, and
+the mutation uses `admin.settings` with same-transaction audit. Local database
+seed completed without altering edited section configuration; 23 PostgreSQL
+tests cover permissions, input validation, audit and inherited/custom hero copy.
+`npm run check` passed typecheck, lint, 100 unit tests and production build.
+Standalone HTTP verified guest/member rejection, invalid input, live metadata
+(including Open Graph/Twitter), footer and inherited hero, independent custom
+hero text and transactional audit. Temporary users, sessions and audit rows were
+removed; the original setting and hero configuration were restored.

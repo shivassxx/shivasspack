@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { siteConfig } from "@/lib/site-config";
 import { BrandName } from "@/components/ui/brand-name";
 
 const columns = [
@@ -28,7 +27,7 @@ const columns = [
   },
 ] as const;
 
-export function SiteFooter({ siteName }: { siteName: string }) {
+export function SiteFooter({ siteName, siteDescription }: { siteName: string; siteDescription: string }) {
   return (
     <footer className="border-t border-line bg-surface-900">
       <div className="mx-auto grid max-w-7xl gap-8 px-4 py-10 sm:grid-cols-2 sm:px-6 lg:grid-cols-4">
@@ -36,7 +35,7 @@ export function SiteFooter({ siteName }: { siteName: string }) {
           <p className="text-sm font-semibold text-white">
              <BrandName name={siteName} />
           </p>
-          <p className="max-w-xs text-sm leading-relaxed text-zinc-500">{siteConfig.description}</p>
+           <p className="max-w-xs text-sm leading-relaxed text-zinc-500">{siteDescription}</p>
         </div>
         {columns.map((col) => (
           <nav key={col.title} aria-label={col.title} className="space-y-2">

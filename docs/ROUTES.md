@@ -74,7 +74,7 @@ Admin layout renders its own sidebar; `proxy.ts` performs a coarse cookie-presen
 redirect, the **real check happens in every admin service call** (defense in depth).
 Implemented so far: `/admin` overview, `/admin/packs`, `/admin/categories`,
 `/admin/tags`, `/admin/homepage` (section order, visibility and content), `/admin/settings`
-(site name and registration switch), `/admin/roles` (grant editor/custom roles),
+(site name, description and registration switch), `/admin/roles` (grant editor/custom roles),
 `/admin/users` (search and role assignment). Every mutation writes
 an `audit_logs` row in the same transaction;
 `pack.publish`, `pack.feature` and `pack.delete` are checked separately from
@@ -103,7 +103,7 @@ instead of a destructive row delete.
 | `/api/admin/packs`                    | GET/POST         | `pack.manage`     | list/create drafts              |
 | `/api/admin/packs/[id]`               | PATCH/DELETE     | `pack.manage`+    | update; DELETE archives         |
 | `/api/admin/homepage`                 | GET/PUT          | `homepage.manage` | order/toggle sections; hero copy/headings; 1-12 pack cards |
-| `/api/admin/settings`                 | GET/PUT          | `admin.settings`   | site name + registrations_enabled |
+| `/api/admin/settings`                 | GET/PUT          | `admin.settings`   | site name/description + registrations_enabled |
 | `/api/admin/roles`                    | GET/POST         | `role.manage`     | list grants/create lower custom role |
 | `/api/admin/roles/[id]`               | PATCH            | `role.manage`     | edit lower role name/description/grants |
 | `/api/admin/users`                    | GET              | `user.manage`     | search/page real users           |

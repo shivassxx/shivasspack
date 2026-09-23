@@ -2,6 +2,7 @@ import { asc, eq, inArray } from "drizzle-orm";
 import type { Database } from "@/db/connection";
 import * as s from "@/db/schema";
 import { siteConfig } from "@/lib/site-config";
+import { readSiteDescription } from "@/services/admin/settings";
 import { assertActive, requirePermission, type Actor } from "@/services/rbac";
 
 // Only sections with real public renderers can be enabled in the builder.
@@ -43,13 +44,14 @@ function validateHero(value: unknown): HeroContent {
   };
 }
 
-function heroContent(config: Record<string, unknown>): HeroContent {
+function heroContent(config: Record<string, unknown>, siteDescription: string): HeroContent {
   const stored = config.hero && typeof config.hero === "object" && !Array.isArray(config.hero)
     ? config.hero as Record<string, unknown> : {};
   return {
     eyebrow: cleanText(stored.eyebrow, defaultHero.eyebrow, 80),
     headline: cleanText(stored.headline, defaultHero.headline, 120),
-    description: cleanText(stored.description, defaultHero.description, 320),
+    description: stored.description === defaultHero.description
+      ? siteDescription : cleanText(stored.description, siteDescription, 320),
     primaryLabel: cleanText(stored.primaryLabel, defaultHero.primaryLabel, 40),
     secondaryLabel: cleanText(stored.secondaryLabel, defaultHero.secondaryLabel, 40),
   };
@@ -60,8 +62,8 @@ function maxItems(config: Record<string, unknown>): number {
   return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 12 ? Number(value) : 6;
 }
 
-function publicSection(row: { key: (typeof s.homepageKey.enumValues)[number]; enabled: boolean; order: number; config: Record<string, unknown> }): HomepageSection {
-  return row.key === "hero" ? { key: row.key, enabled: row.enabled, order: row.order, hero: heroContent(row.config) }
+function publicSection(row: { key: (typeof s.homepageKey.enumValues)[number]; enabled: boolean; order: number; config: Record<string, unknown> }, siteDescription: string): HomepageSection {
+  return row.key === "hero" ? { key: row.key, enabled: row.enabled, order: row.order, hero: heroContent(row.config, siteDescription) }
     : { key: row.key as HomepageKey, enabled: row.enabled, order: row.order, maxItems: maxItems(row.config),
       title: cleanText(row.config.title, defaultPackTitles[row.key as keyof typeof defaultPackTitles], 80) };
 }
@@ -100,12 +102,12 @@ export function validateHomepageSections(value: unknown): HomepageSection[] {
 }
 
 export async function listHomepageSections(db: Database): Promise<HomepageSection[]> {
-  const rows = await db.select({ key: s.homepageSections.key, enabled: s.homepageSections.enabled,
+  const [rows, siteDescription] = await Promise.all([db.select({ key: s.homepageSections.key, enabled: s.homepageSections.enabled,
     order: s.homepageSections.order, config: s.homepageSections.config })
     .from(s.homepageSections)
     .where(inArray(s.homepageSections.key, homepageKeys))
-    .orderBy(asc(s.homepageSections.order), asc(s.homepageSections.key));
-  return rows.map(publicSection);
+    .orderBy(asc(s.homepageSections.order), asc(s.homepageSections.key)), readSiteDescription(db)]);
+  return rows.map((row) => publicSection(row, siteDescription));
 }
 
 export async function listAdminHomepageSections(db: Database, actor: Actor) {
@@ -119,6 +121,7 @@ export async function updateHomepageSections(db: Database, actor: Actor, value: 
   requirePermission(actor, "homepage.manage");
   if (!actor.id) throw new HomepageError("validation", "Geçersiz aktör.", 400);
   const sections = validateHomepageSections(value);
+  const siteDescription = await readSiteDescription(db);
   return db.transaction(async (tx) => {
     const before = await tx.select({ key: s.homepageSections.key, enabled: s.homepageSections.enabled,
       order: s.homepageSections.order, config: s.homepageSections.config })
@@ -131,20 +134,21 @@ export async function updateHomepageSections(db: Database, actor: Actor, value: 
     }
     const effective = sections.map((section) => {
       const current = before.find((row) => row.key === section.key)!;
-      const existing = publicSection(current);
+      const existing = publicSection(current, siteDescription);
       return section.key === "hero" ? { ...section, hero: section.hero ?? existing.hero }
         : { ...section, maxItems: section.maxItems ?? existing.maxItems, title: section.title ?? existing.title };
     });
     for (const section of effective) {
       const current = before.find((row) => row.key === section.key)!;
       await tx.update(s.homepageSections).set({ order: section.order, enabled: section.enabled,
-        config: { ...current.config, ...(section.key === "hero" ? { hero: section.hero }
+        config: { ...current.config, ...(section.key === "hero" ? { hero: { ...section.hero,
+          description: section.hero?.description === siteDescription ? defaultHero.description : section.hero?.description } }
           : { maxItems: section.maxItems, title: section.title }) } })
         .where(eq(s.homepageSections.key, section.key));
     }
     await tx.insert(s.auditLogs).values({
       actorId: actor.id, action: "homepage.update", targetType: "homepage", targetId: "sections",
-      before: { sections: before.map(publicSection) }, after: { sections: effective },
+      before: { sections: before.map((row) => publicSection(row, siteDescription)) }, after: { sections: effective },
     });
     return effective;
   });

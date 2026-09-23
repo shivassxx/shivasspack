@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import type { Database } from "./connection";
 import * as s from "./schema";
+import { siteConfig } from "@/lib/site-config";
 
 export const permissionKeys = [
   "pack.view",
@@ -168,6 +169,7 @@ export async function seedDatabase(db: Pick<Database, "transaction">, includeDem
       .insert(s.siteSettings)
       .values([
         { key: "site_name", value: "SHIVASS PACK" },
+        { key: "site_description", value: siteConfig.description },
         { key: "default_language", value: "tr" },
       ])
       .onConflictDoNothing();
