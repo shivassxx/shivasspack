@@ -33,7 +33,7 @@
 | `/bookmarks`         | RSC    | member        | saved packs                          |
 | `/downloads`         | RSC    | member        | personal download history            |
 | `/notifications`     | RSC+CA | member        | mark read                            |
-| `/submit`            | RSC+CA | `pack.submit` | create drafts + own submission list  |
+| `/submit`            | RSC+CA | `pack.submit` | create drafts + own list; inline edit-and-resend for decision states  |
 | `/submit/[id]`       | RSC+CA | author        | edit while `draft/changes_requested/rejected`, review note, submit/withdraw |
 | `/submit/new`        | RSC+CA | `pack.edit_own` | new version for own approved pack (single moving latest + `pack.version_add` audit) |
 

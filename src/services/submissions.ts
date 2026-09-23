@@ -169,16 +169,6 @@ async function uniqueSlug(db: Database, title: string): Promise<string> {
   throw new SubmissionError("conflict", "Slug oluşturulamadı, başlığı değiştirip tekrar deneyin.", 409);
 }
 
-const summarySelection = {
-  id: s.packs.id,
-  slug: s.packs.slug,
-  title: s.packs.title,
-  status: s.packs.status,
-  reviewNote: s.packs.reviewNote,
-  publishedAt: s.packs.publishedAt,
-  updatedAt: s.packs.updatedAt,
-} as const;
-
 export async function createSubmission(db: Database, actor: Actor, input: SubmissionInput) {
   const actorId = gate(actor, "pack.submit");
   const fields = parseFields(input);
@@ -222,14 +212,24 @@ export async function createSubmission(db: Database, actor: Actor, input: Submis
   }
 }
 
-export async function listSubmissions(db: Database, actor: Actor): Promise<SubmissionSummary[]> {
+export async function listSubmissions(db: Database, actor: Actor): Promise<SubmissionDetail[]> {
   const actorId = gate(actor, "pack.submit");
   const rows = await db
-    .select(summarySelection)
+    .select()
     .from(s.packs)
     .where(and(eq(s.packs.creatorId, actorId), eq(s.packs.isDemo, false)))
     .orderBy(desc(s.packs.updatedAt), desc(s.packs.id));
-  return rows.map(toSummary);
+  const tagRows = rows.length > 0
+    ? await db
+        .select({ packId: s.packTags.packId, tagId: s.packTags.tagId })
+        .from(s.packTags)
+        .where(inArray(s.packTags.packId, rows.map((row) => row.id)))
+    : [];
+  return rows.map((row) => ({
+    ...toSummary(row),
+    ...detailFields(row),
+    tagIds: tagRows.filter((tag) => tag.packId === row.id).map((tag) => tag.tagId),
+  }));
 }
 
 async function loadOwn(db: Database, actorId: string, id: string) {

@@ -10,12 +10,12 @@ import {
   canWithdrawSubmission,
 } from "@/lib/submission-state";
 
-type Option = { id: string; name: string };
+export type Option = { id: string; name: string };
 
 const inputClass = "h-10 rounded-md border border-line bg-surface-950 px-3 text-sm text-white outline-none focus:border-accent-500 disabled:opacity-60";
 const textAreaClass = "min-h-24 rounded-md border border-line bg-surface-950 p-3 text-sm text-white outline-none focus:border-accent-500 disabled:opacity-60";
-const primaryButton = "inline-flex h-10 items-center justify-center rounded-md bg-accent-600 px-4 text-sm font-semibold text-white transition hover:bg-accent-500 disabled:cursor-not-allowed disabled:opacity-60";
-const secondaryButton = "inline-flex h-10 items-center justify-center rounded-md border border-line bg-surface-950 px-4 text-sm font-medium text-zinc-200 transition hover:border-accent-500/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-60";
+export const primaryButton = "inline-flex h-10 items-center justify-center rounded-md bg-accent-600 px-4 text-sm font-semibold text-white transition hover:bg-accent-500 disabled:cursor-not-allowed disabled:opacity-60";
+export const secondaryButton = "inline-flex h-10 items-center justify-center rounded-md border border-line bg-surface-950 px-4 text-sm font-medium text-zinc-200 transition hover:border-accent-500/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-60";
 
 export type SubmissionFormValues = {
   title: string;
@@ -27,7 +27,7 @@ export type SubmissionFormValues = {
   tagIds: string[];
 };
 
-function readForm(form: HTMLFormElement): SubmissionFormValues {
+export function readForm(form: HTMLFormElement): SubmissionFormValues {
   const data = new FormData(form);
   return {
     title: String(data.get("title") ?? ""),
@@ -40,7 +40,7 @@ function readForm(form: HTMLFormElement): SubmissionFormValues {
   };
 }
 
-function Fields({ categories, tags, initial, disabled }: {
+export function Fields({ categories, tags, initial, disabled }: {
   categories: Option[];
   tags: Option[];
   initial?: SubmissionFormValues;

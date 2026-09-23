@@ -441,3 +441,25 @@ deep-link fallback, the 404-before/302-after download switch, version one and
 two with `latestVersion` updates on the public API, every 400/404/409
 rejection, the list/editor links and the audit rows; temporary users, packs,
 versions, downloads and audit rows were removed, leaving zero residue.
+
+The list editor closes the author's loop on review decisions.
+`listSubmissions` now returns full detail rows (excerpt, description,
+category, source and license plus tag ids gathered with one `inArray` query)
+so the client can repopulate a form without a second fetch; the payload stays
+owner-scoped behind `pack.submit`. `/submit` moved its cards into a client
+`SubmissionList` component: `changes_requested` and `rejected` items gain a
+"Düzenle ve tekrar gönder" toggle that opens the shared field editor inline
+and runs the exact safe sequence — `PATCH /api/submissions/[id]` then
+`POST /api/submissions/[id]/status` with `action=submit` — collapsing on
+success and refreshing state, so a failed save keeps the review note intact
+while a successful one clears it and moves the row back to `pending`. Drafts
+keep the link-only treatment; approved rows keep their public and version
+links. The unit suite stays at 112 tests; the PostgreSQL suite asserts the
+enriched list payload (detail fields and tag ids) inside the existing
+submission flow test. Standalone HTTP verified the affordance renders only
+for decision states (draft has none), the note banner and status chip on the
+card, the PATCH + resubmit round trip reflected in the API list as pending
+with a cleared note and edited fields, the affordance disappearing once
+pending, the update/submit audit rows and the 409 on a duplicate submit;
+temporary users, packs, categories and audit rows were removed, leaving zero
+residue.

@@ -1421,6 +1421,12 @@ test("submission flow creates drafts, gates transitions and audits review decisi
       const mine = await listSubmissions(db, authorActor);
       assert.equal(mine.find((item) => item.id === created.id)?.status, "approved");
       assert.equal(mine.find((item) => item.id === second.id)?.status, "draft");
+      // The list carries full detail fields so inline editing can repopulate the form.
+      const detailed = mine.find((item) => item.id === created.id);
+      assert.equal(detailed?.excerpt, "Updated summary after feedback");
+      assert.equal(detailed?.categoryId, category.id);
+      assert.equal(detailed?.sourceUrl, null);
+      assert.deepEqual(detailed?.tagIds, [tag.id]);
       const audits = await tx.select({ action: schema.auditLogs.action })
         .from(schema.auditLogs).where(eq(schema.auditLogs.targetId, created.id));
       const actions = audits.map((row) => row.action);
