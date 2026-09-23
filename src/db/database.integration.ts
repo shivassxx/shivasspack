@@ -48,6 +48,7 @@ import { assignUserRole, listAdminUsers } from "../services/admin/users";
 import { loadActor } from "../services/rbac";
 import { getBookmarkState, getMemberBookmarks, setPackBookmark } from "../services/packs/bookmarks";
 import { getPackLikeState, setPackLike } from "../services/packs/likes";
+import { getMemberRating, setPackRating } from "../services/packs/ratings";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -834,6 +835,56 @@ test("pack likes are idempotent, isolated by target type and visibility-gated", 
       await assert.rejects(setPackLike(db, second, slug, false), /Paket bulunamadı/);
       const [stored] = await tx.select({ count: schema.packs.likeCount }).from(schema.packs).where(eq(schema.packs.id, pack.id));
       assert.equal(stored?.count, 1);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("ratings recalculate the aggregate for create, update and removal without duplicates", async () => {
+  const rollback = new Error("ROLLBACK_PACK_RATING_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const users = await tx.insert(schema.users).values([1, 2].map((number) => ({
+        username: `rater-${number}-${suffix}`, displayName: `Rater ${number}`,
+        email: `rater-${number}-${suffix}@example.invalid`, roleId: role.id,
+      }))).returning({ id: schema.users.id });
+      const [category] = await tx.insert(schema.packCategories).values({ slug: `rate-${suffix}`, name: "Rate Category", kind: "graphics" })
+        .returning({ id: schema.packCategories.id });
+      assert.ok(category && users.length === 2);
+      const slug = `rate-${suffix}`;
+      const [pack] = await tx.insert(schema.packs).values({ slug, title: "Rating Test Pack", excerpt: "Rating test",
+        description: "A published pack for rating checks.", categoryId: category.id, creatorId: users[0]!.id,
+        status: "approved", publishedAt: new Date(Date.now() - 60000),
+      }).returning({ id: schema.packs.id });
+      assert.ok(pack);
+      const actor: Actor = { id: users[0]!.id, displayName: "Rater 1", roleKey: "custom",
+        status: "active", banUntil: null, permissions: new Set(["pack.view"]) };
+      const second: Actor = { ...actor, id: users[1]!.id };
+      await assert.rejects(setPackRating(db, { ...actor, permissions: new Set() }, slug, 5), /Missing permission/);
+      await assert.rejects(setPackRating(db, { ...actor, status: "suspended" }, slug, 5));
+      for (const invalid of [0, 6, 2.5, "5", undefined]) {
+        await assert.rejects(setPackRating(db, actor, slug, invalid), /1-5/);
+      }
+      await assert.rejects(setPackRating(db, actor, "bad slug", 5), /Paket bulunamadı/);
+      assert.equal(await getMemberRating(db, actor, pack.id), null);
+      assert.deepEqual(await setPackRating(db, actor, slug, 5), { value: 5, ratingAvg: "5.0", ratingCount: 1 });
+      assert.deepEqual(await setPackRating(db, actor, slug, 5), { value: 5, ratingAvg: "5.0", ratingCount: 1 });
+      assert.deepEqual(await setPackRating(db, second, slug, 4), { value: 4, ratingAvg: "4.5", ratingCount: 2 });
+      assert.equal(await getMemberRating(db, actor, pack.id), 5);
+      assert.equal(await getMemberRating(db, second, pack.id), 4);
+      assert.deepEqual(await setPackRating(db, actor, slug, 2), { value: 2, ratingAvg: "3.0", ratingCount: 2 });
+      assert.deepEqual(await setPackRating(db, actor, slug, null), { value: null, ratingAvg: "4.0", ratingCount: 1 });
+      assert.deepEqual(await setPackRating(db, actor, slug, null), { value: null, ratingAvg: "4.0", ratingCount: 1 });
+      assert.deepEqual(await setPackRating(db, second, slug, null), { value: null, ratingAvg: "0.0", ratingCount: 0 });
+      const [stored] = await tx.select({ average: schema.packs.ratingAvg, count: schema.packs.ratingCount })
+        .from(schema.packs).where(eq(schema.packs.id, pack.id));
+      assert.deepEqual(stored, { average: "0.0", count: 0 });
+      await tx.update(schema.packCategories).set({ enabled: false }).where(eq(schema.packCategories.id, category.id));
+      await assert.rejects(setPackRating(db, actor, slug, 3), /Paket bulunamadı/);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

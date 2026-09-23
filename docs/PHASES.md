@@ -294,3 +294,17 @@ PostgreSQL suite now has 25 tests, including two users and repeated requests.
 Standalone HTTP confirmed guest 401, unknown/archived pack 404, two-user
 idempotent counts and the detail button's live pressed state. Temporary users,
 sessions, category, pack and likes were removed.
+
+Package ratings are now a third interaction. Signed-in members can select
+1-5, update their existing vote or remove it on `/packs/[slug]`. PUT/DELETE on
+`/api/packs/[slug]/rate` validate input and recalculate the one-decimal average
+and vote count inside the same serialized DB transaction. Only approved,
+non-demo packs in enabled categories are eligible; server-side checks enforce
+active sessions and `pack.view`. PostgreSQL integration coverage now has 26
+tests, including two voters, invalid values, repeat writes, updates and a full
+reset to zero.
+`npm run check` passed typecheck, lint, 100 unit tests and production build;
+the real PostgreSQL suite passed all 26 tests. Standalone HTTP confirmed
+guest/invalid/not-found/archive responses, two-member average and update,
+idempotent removal, reset to zero and the detail control. Temporary users,
+sessions, category, pack and ratings were removed.
