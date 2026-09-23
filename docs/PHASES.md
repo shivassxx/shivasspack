@@ -331,3 +331,21 @@ The increment is one atomic UPDATE and the visible counter refreshes only
 when a view was actually recorded. PostgreSQL coverage is now 28 tests,
 covering guest/member identities, repeats, two visitors, bad slugs, disabled
 categories and archived packs.
+
+Downloads close the Phase 7 interaction set. `GET /api/packs/[slug]/download`
+resolves the latest version's primary URL or an explicit/first-priority
+enabled mirror (safe http(s) parsing, no open redirect) and answers 302 with
+`no-store`. Permission `download.use` is enforced server-side; identity is the
+member id or guest IP + user agent, capped at 10 attempts per hour (429 with
+Retry-After) and counted at most once per 30 minutes. Each counted event writes
+one `downloads` row (IP stored only as SHA-256, kind `manual`, mirror label)
+and bumps `download_count` in the same transaction. The detail page renders
+the Indir button and mirror links only when a source exists, and members get a
+paginated `/downloads` history (own rows only, archived packs included) plus a
+user-menu link. PostgreSQL coverage is now 29 tests: permissions, suspension,
+dedupe, mirror selection/order, no-target 404, the abuse ceiling, row/counter
+consistency, visibility gates and history isolation. Standalone HTTP confirmed
+404 paths, guest/member dedupe, mirror selection, hashed+attributed rows, the
+10/hour 429 with Retry-After, detail CTAs, the member history page and the
+archive freeze; temporary rows were removed through the migrator role because
+`downloads` is append-only for the app role, leaving zero residue.

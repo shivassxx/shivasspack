@@ -18,7 +18,7 @@ import {
 } from "../services/auth/service";
 import { listActiveSessions, resolveSession, revokeSession } from "../services/auth/session";
 import { hashToken } from "../services/auth/token";
-import { can, type Actor } from "../services/rbac";
+import { can, type Actor, type PermissionKey } from "../services/rbac";
 import { consumeRateLimit } from "../services/rate-limit";
 import {
   getPublishedPack,
@@ -51,6 +51,7 @@ import { getPackLikeState, setPackLike } from "../services/packs/likes";
 import { getMemberRating, setPackRating } from "../services/packs/ratings";
 import { createPackComment, listPackComments } from "../services/packs/comments";
 import { recordPackView } from "../services/packs/views";
+import { getMemberDownloadHistory, getPackDownloadOptions, resolvePackDownload, DownloadError } from "../services/packs/downloads";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -982,6 +983,141 @@ test("pack views dedupe one identity per window and stay visibility-gated", asyn
       await assert.rejects(recordPackView(db, slug, "guest:203.0.113.9|new-agent/1.0"), /Paket bulunamadı/);
       const [final] = await tx.select({ count: schema.packs.viewCount }).from(schema.packs).where(eq(schema.packs.id, pack.id));
       assert.equal(final?.count, 3);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("downloads resolve sources, rate-limit, count once per identity and keep member history", async () => {
+  const rollback = new Error("ROLLBACK_PACK_DOWNLOAD_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const users = await tx.insert(schema.users).values([1, 2].map((number) => ({
+        username: `dl-${number}-${suffix}`, displayName: `Downloader ${number}`,
+        email: `dl-${number}-${suffix}@example.invalid`, roleId: role.id,
+      }))).returning({ id: schema.users.id });
+      assert.equal(users.length, 2);
+      const [category] = await tx.insert(schema.packCategories).values({ slug: `dl-${suffix}`,
+        name: "Download Category", kind: "graphics" }).returning({ id: schema.packCategories.id });
+      assert.ok(category);
+      const base = {
+        excerpt: "A public package", categoryId: category.id, status: "approved" as const,
+        publishedAt: new Date(Date.now() - 60000),
+      };
+      const [packOne, packTwo, packThree] = await tx.insert(schema.packs).values([
+        { ...base, slug: `dl-one-${suffix}`, title: "Download Test Pack One", description: "First download pack.", creatorId: users[0]!.id },
+        { ...base, slug: `dl-two-${suffix}`, title: "Download Test Pack Two", description: "Second download pack.", creatorId: users[0]!.id },
+        { ...base, slug: `dl-three-${suffix}`, title: "Download Test Pack Three", description: "No download target.", creatorId: users[0]!.id },
+      ]).returning({ id: schema.packs.id, slug: schema.packs.slug });
+      assert.ok(packOne && packTwo && packThree);
+      const versions = await tx.insert(schema.packVersions).values([
+        { packId: packOne.id, version: "1.0.0", isLatest: true, downloadUrl: "https://files.example.invalid/one.zip" },
+        { packId: packTwo.id, version: "2.1.0", isLatest: true },
+        { packId: packThree.id, version: "3.0.0", isLatest: true },
+      ]).returning({ id: schema.packVersions.id, packId: schema.packVersions.packId });
+      assert.equal(versions.length, 3);
+      const [versionOne, versionTwo] = versions;
+      const mirrors = await tx.insert(schema.downloadMirrors).values([
+        { packVersionId: versionOne!.id, name: "EU-Mirror", url: "https://eu.example.invalid/one.zip", priority: 2 },
+        { packVersionId: versionOne!.id, name: "US-Mirror", url: "https://us.example.invalid/one.zip", priority: 1 },
+        { packVersionId: versionTwo!.id, name: "Backup", url: "https://backup.example.invalid/two.zip", priority: 3 },
+        { packVersionId: versionTwo!.id, name: "First", url: "https://first.example.invalid/two.zip", priority: 1 },
+      ]).returning({ id: schema.downloadMirrors.id, name: schema.downloadMirrors.name });
+      assert.equal(mirrors.length, 4);
+      const usMirror = mirrors.find((mirror) => mirror.name === "US-Mirror");
+      assert.ok(usMirror);
+
+      const viewer = (id: string | null, extra: PermissionKey[] = []): Actor => ({
+        id, displayName: id ? "Downloader" : null, roleKey: "custom", status: "active", banUntil: null,
+        permissions: new Set<PermissionKey>(["pack.view", "download.use", ...extra]),
+      });
+      const noDownloadPermission = { ...viewer(users[0]!.id), permissions: new Set<PermissionKey>(["pack.view"]) } as Actor;
+      await assert.rejects(resolvePackDownload(db, noDownloadPermission, packOne.slug,
+        { ip: "198.51.100.9", userAgent: "x" }), /Missing permission: download.use/);
+      await assert.rejects(resolvePackDownload(db, { ...viewer(users[0]!.id), status: "suspended" }, packOne.slug,
+        { ip: "198.51.100.9", userAgent: "x" }), /Account unavailable/);
+
+      // Guest identity: first call counts, repeat inside the window only redirects.
+      const guestIp = { ip: "198.51.100.4", userAgent: "agent/1" };
+      assert.deepEqual(await resolvePackDownload(db, viewer(null), packOne.slug, guestIp),
+        { url: "https://files.example.invalid/one.zip", counted: true, downloadCount: 1 });
+      assert.deepEqual(await resolvePackDownload(db, viewer(null), packOne.slug, guestIp),
+        { url: "https://files.example.invalid/one.zip", counted: false, downloadCount: 1 });
+      // Member identity is deduped by user id regardless of IP/UA.
+      assert.deepEqual(await resolvePackDownload(db, viewer(users[0]!.id), packOne.slug,
+        { ip: "198.51.100.5", userAgent: "agent/2" }), { url: "https://files.example.invalid/one.zip", counted: true, downloadCount: 2 });
+      assert.deepEqual(await resolvePackDownload(db, viewer(users[0]!.id), packOne.slug,
+        { ip: "198.51.100.6", userAgent: "agent/3" }), { url: "https://files.example.invalid/one.zip", counted: false, downloadCount: 2 });
+      // Explicit mirror selection and recording.
+      assert.deepEqual(await resolvePackDownload(db, viewer(users[1]!.id), packOne.slug,
+        { ip: "198.51.100.7", userAgent: "agent/4" }, usMirror!.id),
+        { url: "https://us.example.invalid/one.zip", counted: true, downloadCount: 3 });
+      await assert.rejects(resolvePackDownload(db, viewer(users[1]!.id), packOne.slug,
+        { ip: "198.51.100.7", userAgent: "agent/4" }, "mirror_missing"), /Ayna bulunamadı/);
+      // No primary URL: lowest priority number wins.
+      const mirrorOnly = await resolvePackDownload(db, viewer(users[1]!.id), packTwo.slug,
+        { ip: "198.51.100.8", userAgent: "agent/5" });
+      assert.deepEqual(mirrorOnly, { url: "https://first.example.invalid/two.zip", counted: true, downloadCount: 1 });
+      assert.equal((await getPackDownloadOptions(db, packTwo.slug)).available, true);
+      // No sources at all.
+      await assert.rejects(resolvePackDownload(db, viewer(null), packThree.slug,
+        { ip: "198.51.100.9", userAgent: "agent/6" }), /İndirme bağlantısı bulunamadı/);
+      assert.deepEqual(await getPackDownloadOptions(db, packThree.slug),
+        { available: false, primary: false, mirrors: [] });
+      assert.deepEqual(await getPackDownloadOptions(db, "missing"), { available: false, primary: false, mirrors: [] });
+
+      // Abuse ceiling: the eleventh attempt for one identity is rejected.
+      const spamIp = { ip: "203.0.113.50", userAgent: "spam/1" };
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await resolvePackDownload(db, viewer(null), packOne.slug, spamIp);
+      }
+      try {
+        await resolvePackDownload(db, viewer(null), packOne.slug, spamIp);
+        assert.fail("Expected the abuse rate limit to reject the eleventh attempt.");
+      } catch (error) {
+        assert.ok(error instanceof DownloadError);
+        assert.equal(error.status, 429);
+        assert.match(error.message, /sıklaştı/);
+      }
+
+      // Every counted event left exactly one row; counters match.
+      const rows = await tx.select().from(schema.downloads).where(eq(schema.downloads.packId, packOne.id));
+      assert.equal(rows.length, 4);
+      assert.deepEqual(new Set(rows.map((row) => row.mirror)), new Set(["primary", "US-Mirror"]));
+      assert.ok(rows.every((row) => row.kind === "manual" && /^[a-f0-9]{64}$/.test(row.ipHash)));
+      assert.deepEqual(new Set(rows.map((row) => row.userId)), new Set([null, users[0]!.id, users[1]!.id]));
+      assert.ok(rows.every((row) => row.packVersionId === versionOne!.id));
+      const [storedCount] = await tx.select({ count: schema.packs.downloadCount })
+        .from(schema.packs).where(eq(schema.packs.id, packOne.id));
+      assert.equal(storedCount?.count, 4);
+
+      // Visibility gates.
+      await tx.update(schema.packCategories).set({ enabled: false }).where(eq(schema.packCategories.id, category.id));
+      await assert.rejects(resolvePackDownload(db, viewer(null), packOne.slug, spamIp), /Paket bulunamadı/);
+      assert.deepEqual(await getPackDownloadOptions(db, packOne.slug), { available: false, primary: false, mirrors: [] });
+      await tx.update(schema.packCategories).set({ enabled: true }).where(eq(schema.packCategories.id, category.id));
+      await tx.update(schema.packs).set({ status: "archived" }).where(eq(schema.packs.id, packOne.id));
+      await assert.rejects(resolvePackDownload(db, viewer(null), packOne.slug, spamIp), /Paket bulunamadı/);
+
+      // History: own rows only, newest first, guests cannot read it.
+      await assert.rejects(getMemberDownloadHistory(db, viewer(null)), /İndirme kaydı bulunamadı/);
+      await assert.rejects(getMemberDownloadHistory(db, noDownloadPermission), /Missing permission: download.use/);
+      const firstHistory = await getMemberDownloadHistory(db, viewer(users[0]!.id));
+      assert.equal(firstHistory.total, 1);
+      assert.equal(firstHistory.items[0]?.title, "Download Test Pack One");
+      assert.equal(firstHistory.items[0]?.mirror, "primary");
+      assert.equal(firstHistory.items[0]?.version, "1.0.0");
+      const secondHistory = await getMemberDownloadHistory(db, viewer(users[1]!.id));
+      assert.equal(secondHistory.total, 2);
+      assert.equal(secondHistory.items[0]?.title, "Download Test Pack Two");
+      assert.equal(secondHistory.items[0]?.mirror, "First");
+      assert.equal(secondHistory.items[1]?.title, "Download Test Pack One");
+      assert.equal(secondHistory.items[1]?.mirror, "US-Mirror");
+      assert.equal((await getMemberDownloadHistory(db, viewer(users[1]!.id), 99)).page, 1);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

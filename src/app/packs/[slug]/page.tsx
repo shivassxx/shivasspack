@@ -11,6 +11,7 @@ import { ViewTracker } from "@/features/packs/view-tracker";
 import { getCurrentSession } from "@/lib/auth-context";
 import { getBookmarkState } from "@/services/packs/bookmarks";
 import { listPackComments } from "@/services/packs/comments";
+import { getPackDownloadOptions } from "@/services/packs/downloads";
 import { getPackLikeState } from "@/services/packs/likes";
 import { getMemberRating } from "@/services/packs/ratings";
 import { getPublishedPack } from "@/services/packs/public";
@@ -60,6 +61,7 @@ export default async function PackDetailPage({ params, searchParams }: {
     catch { canInteract = false; }
   }
   const comments = await listPackComments(getDatabase().db, slug, Number(query.commentsPage ?? 1));
+  const downloadOptions = await getPackDownloadOptions(getDatabase().db, slug);
   const [isSaved, isLiked, myRating] = canInteract ? await Promise.all([
     getBookmarkState(getDatabase().db, session!.actor, pack.id),
     getPackLikeState(getDatabase().db, session!.actor, pack.id),
@@ -120,7 +122,18 @@ export default async function PackDetailPage({ params, searchParams }: {
             <p className="flex items-center gap-2 text-xs font-medium text-zinc-300"><ShieldCheck className="size-4 text-accent-400" aria-hidden />{permissionLabels[pack.distributionPermission]}</p>
             {sourceUrl ? <a href={sourceUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-accent-400 hover:text-accent-300">Kaynağı aç ↗</a> : null}
           </div>
-          <p className="mt-4 text-xs leading-5 text-zinc-600">İndirme sistemi etkinleştirildiğinde doğrulanmış ayna veya resmi kaynak burada sunulacak.</p>
+          {downloadOptions.available ? <div className="mt-4 space-y-2">
+            {downloadOptions.primary ? <a href={`/api/packs/${encodeURIComponent(pack.slug)}/download`}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-accent-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-accent-500">
+              <Download className="size-4" aria-hidden />İndir
+            </a> : null}
+            {downloadOptions.mirrors.length ? <ul className="space-y-1" aria-label="İndirme aynaları">
+              {downloadOptions.mirrors.map((mirror) => <li key={mirror.id}>
+                <a href={`/api/packs/${encodeURIComponent(pack.slug)}/download?mirror=${encodeURIComponent(mirror.id)}`}
+                  className="text-xs text-accent-400 hover:text-accent-300">Ayna: {mirror.name}</a>
+              </li>)}
+            </ul> : null}
+          </div> : <p className="mt-4 text-xs leading-5 text-zinc-600">İndirme bağlantısı henüz eklenmedi.</p>}
         </aside>
       </header>
 
