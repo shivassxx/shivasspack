@@ -528,3 +528,32 @@ Production build and standalone HTTP verified author edit, moderator permissions
 lock, pin, hide/show, public 404 and reinstatement, counter restoration, audit
 idempotence and complete fixture cleanup. Forum API reads use `no-store` so
 moderation changes are visible immediately.
+
+Forum reporting: members with `forum.read` can submit a reason (and optional
+detail) on visible topics or replies using the inline “Bildir” control.
+`POST /api/forum/reports` validates target visibility including its category,
+serializes duplicate submissions by member/target, permits only one open or
+reviewing report for each, and inserts an audit record transactionally.
+`/admin/moderation` shows the most recent 100 forum reports and their content
+to `moderation.access`; `moderation.resolve` permits reviewing, resolving or
+dismissing with a required decision note for final decisions. Resolution and
+audit are atomic; closed reports cannot be decided twice. PostgreSQL covers
+validation, visibility, permission boundaries, duplicates, transitions and
+audits (37 tests total).
+
+Ban control: `/admin/bans` allows moderators with `user.ban` to search
+lower-ranked active users or view active bans. `PATCH /api/admin/bans/[id]`
+requires a 1-365-day duration and 10-500-character reason for bans; unban
+clears both date and reason. The service locks the target, verifies actual DB
+role ranks, prevents self/equal-or-higher-role actions, and writes `user.ban`
+or `user.unban` audit transactionally. Banned accounts are already rejected
+by auth login and `assertActive` on member mutations. PostgreSQL now runs 38
+tests, including ban permissions, rank isolation, dates, write denial and
+unban restoration. `npm run check` passed typecheck, lint, 114 unit tests and
+production build; all 38 PostgreSQL integration tests passed. Standalone HTTP
+verified member reports, duplicate rejection, moderator queue, reviewing and
+final resolution, rank-gated ban, blocked posting while banned, unban and
+restored posting. Both live E2E users, topic, replies, report and audit data
+were removed with zero fixture residue. The core Phase 9 forum/report/ban/audit
+flow is complete; remaining route-map concepts outside this slice are not
+presented as working links.

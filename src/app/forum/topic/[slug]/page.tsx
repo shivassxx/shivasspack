@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDatabase } from "@/db/client";
 import { ReplyForm } from "@/features/forum/reply-form";
+import { ForumReportForm } from "@/features/forum/report-form";
 import { getCurrentSession } from "@/lib/auth-context";
 import { formatDate } from "@/lib/utils";
 import { forumPage, getForumTopic, listForumReplies } from "@/services/forum";
@@ -34,6 +35,7 @@ export default async function ForumTopicPage({ params, searchParams }: {
   }
   const canEdit = active && session && (session.actor.permissions.has("forum.moderate") ||
     (session.actor.id === topic.authorId && session.actor.permissions.has("forum.edit_own") && !topic.isLocked));
+  const canReport = active && session?.actor.permissions.has("forum.read");
   return (
     <article className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6">
       <nav aria-label="İçerik yolu" className="text-xs text-zinc-500">
@@ -47,6 +49,7 @@ export default async function ForumTopicPage({ params, searchParams }: {
         <h1 className="mt-2 text-3xl font-semibold text-white">{topic.title}</h1>
         <p className="mt-3 text-sm text-zinc-400">{topic.authorName} (@{topic.authorUsername}) · <time dateTime={topic.createdAt.toISOString()}>{formatDate(topic.createdAt)}</time></p>
         {canEdit ? <Link href={`/forum/topic/${topic.slug}/edit`} className="mt-3 inline-block text-sm text-accent-400 hover:text-accent-300">Konuyu düzenle</Link> : null}
+        {canReport ? <ForumReportForm targetType="topic" targetId={topic.id} /> : null}
       </header>
       <div className="mt-7 whitespace-pre-wrap break-words rounded-xl border border-line bg-surface-900 p-6 text-sm leading-7 text-zinc-200">{topic.body}</div>
       <section aria-labelledby="topic-replies" className="mt-10">
@@ -55,6 +58,7 @@ export default async function ForumTopicPage({ params, searchParams }: {
           {replies.items.map((reply) => <li key={reply.id} className="rounded-xl border border-line bg-surface-900 p-5">
             <p className="text-xs text-zinc-400">{reply.authorName} (@{reply.authorUsername}) · <time dateTime={reply.createdAt.toISOString()}>{formatDate(reply.createdAt)}</time></p>
             <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-zinc-200">{reply.body}</p>
+            {canReport ? <ForumReportForm targetType="reply" targetId={reply.id} /> : null}
           </li>)}
         </ol> : <p className="mt-4 text-sm text-zinc-400">Henüz yanıt yok.</p>}
         {replies.pageCount > 1 ? <nav aria-label="Yanıt sayfaları" className="mt-5 flex items-center gap-4 text-sm">

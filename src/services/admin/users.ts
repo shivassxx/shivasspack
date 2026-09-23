@@ -1,4 +1,4 @@
-import { and, asc, count, eq, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, sql } from "drizzle-orm";
 import type { Database } from "@/db/connection";
 import * as s from "@/db/schema";
 import { assertActive, AuthorizationError, requirePermission, type Actor } from "@/services/rbac";
@@ -65,5 +65,58 @@ export async function assignUserRole(db: Database, actor: Actor, userId: string,
     await tx.insert(s.auditLogs).values({ actorId: actor.id, action: "user.role.assign", targetType: "user", targetId: userId,
       before: { roleId: target.roleId, roleKey: target.roleKey }, after: { roleId: nextRole.id, roleKey: nextRole.key } });
     return { id: target.id, username: target.username, roleId: nextRole.id, roleKey: nextRole.key };
+  });
+}
+
+export async function listBanTargets(db: Database, actor: Actor, query: unknown) {
+  assertActive(actor);
+  requirePermission(actor, "user.ban");
+  const q = typeof query === "string" ? query.trim().toLowerCase().slice(0, 32).replace(/[^a-z0-9_-]/g, "") : "";
+  const [own] = await db.select({ rank: s.roles.rank }).from(s.users)
+    .innerJoin(s.roles, eq(s.roles.id, s.users.roleId)).where(eq(s.users.id, actor.id!));
+  if (!own) throw new AuthorizationError("Hesap bulunamadı.");
+  const rows = await db.select({ id: s.users.id, username: s.users.username, displayName: s.users.displayName,
+    rank: s.roles.rank, roleName: s.roles.name, banUntil: s.users.banUntil, bannedReason: s.users.bannedReason,
+  }).from(s.users).innerJoin(s.roles, eq(s.roles.id, s.users.roleId))
+    .where(and(eq(s.users.status, "active"), eq(s.users.isDemo, false),
+      q ? sql`position(${q} in ${s.users.username}) > 0` : gt(s.users.banUntil, new Date())))
+    .orderBy(asc(s.users.username)).limit(50);
+  return { q, items: rows.map((row) => ({ ...row, manageable: row.id !== actor.id && row.rank < own.rank })) };
+}
+
+export async function setUserBan(db: Database, actor: Actor, userId: string,
+  input: { action?: unknown; days?: unknown; reason?: unknown }) {
+  assertActive(actor);
+  requirePermission(actor, "user.ban");
+  const action = input.action;
+  if (action !== "ban" && action !== "unban") throw new UserAdminError("validation", "Geçersiz işlem.", 400);
+  const days = input.days;
+  const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+  if (action === "ban" && (!Number.isInteger(days) || (days as number) < 1 || (days as number) > 365 ||
+      reason.length < 10 || reason.length > 500)) {
+    throw new UserAdminError("validation", "Süre 1-365 gün, gerekçe 10-500 karakter olmalı.", 400);
+  }
+  if (userId === actor.id) throw new AuthorizationError("Kendini yasaklayamazsın.");
+  return db.transaction(async (tx) => {
+    const [own] = await tx.select({ rank: s.roles.rank }).from(s.users)
+      .innerJoin(s.roles, eq(s.roles.id, s.users.roleId)).where(eq(s.users.id, actor.id!));
+    const [target] = await tx.select({ id: s.users.id, username: s.users.username,
+      rank: s.roles.rank, isDemo: s.users.isDemo, status: s.users.status,
+      banUntil: s.users.banUntil, bannedReason: s.users.bannedReason })
+      .from(s.users).innerJoin(s.roles, eq(s.roles.id, s.users.roleId))
+      .where(eq(s.users.id, userId)).for("update");
+    if (!target || target.isDemo || target.status !== "active") throw new UserAdminError("not_found", "Kullanıcı bulunamadı.", 404);
+    if (!own || target.rank >= own.rank) throw new AuthorizationError("Yalnızca kendi seviyenin altındaki kullanıcıları yönetebilirsin.");
+    if (action === "unban" && !target.banUntil) throw new UserAdminError("validation", "Hesap yasaklı değil.", 409);
+    const banUntil = action === "ban" ? new Date(Date.now() + (days as number) * 86_400_000) : null;
+    const [updated] = await tx.update(s.users).set({ banUntil, bannedReason: action === "ban" ? reason : null })
+      .where(eq(s.users.id, target.id)).returning({ id: s.users.id, username: s.users.username,
+        banUntil: s.users.banUntil, bannedReason: s.users.bannedReason });
+    if (!updated) throw new Error("User ban update returned no row.");
+    await tx.insert(s.auditLogs).values({ actorId: actor.id, action: `user.${action}`,
+      targetType: "user", targetId: target.id,
+      before: { banUntil: target.banUntil?.toISOString() ?? null, reason: target.bannedReason },
+      after: { banUntil: updated.banUntil?.toISOString() ?? null, reason: updated.bannedReason } });
+    return updated;
   });
 }

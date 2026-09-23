@@ -11,6 +11,7 @@ const adminPermissions: readonly PermissionKey[] = [
   "tag.manage",
   "submission.review",
   "user.manage",
+  "user.ban",
   "role.manage",
   "forum.moderate",
   "moderation.access",

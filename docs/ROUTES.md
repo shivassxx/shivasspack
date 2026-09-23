@@ -46,15 +46,14 @@
 | `/forum/topic/[slug]`        | RSC+API | public / `forum.reply.create` for replies |
 | `/forum/new`                 | RSC+API | `forum.topic.create`      |
 | `/forum/topic/[slug]/edit`   | RSC+API | `forum.edit_own` owner or `forum.moderate` |
-| `/forum/topic/[slug]/reply`  | CA     | `forum.reply.create`       |
-| `/forum/topic/[slug]/report` | CA     | member                     |
 
 Implemented: category directory, category topic listing (paged), topic detail
 with visible replies, member topic creation and reply creation, author edit,
 and moderator lock/pin/hide/reinstate actions. Only enabled non-demo categories
 and visible non-demo topics/replies are public; writes require their server-side
-forum grants. Reports, bans and further moderation routes remain in the next
-Phase 9 slices.
+forum grants. Member topic/reply reports and the moderator decision queue are
+implemented. Moderators can search and ban lower-ranked members for a bounded
+period or lift their bans.
 
 ## Admin (`/admin`, `admin.*` permission + server-side check)
 
@@ -68,7 +67,8 @@ Phase 9 slices.
 | `/admin/users` (+ `[id]`)       | RSC+CA | `user.manage`               |
 | `/admin/roles`                  | RSC+CA | `role.manage`               |
 | `/admin/forum`                  | RSC+API | `forum.moderate`           |
-| `/admin/moderation`             | RSC+CA | `moderation.access` (queue) |
+| `/admin/moderation`             | RSC+API | `moderation.access` (queue); decisions need `moderation.resolve` |
+| `/admin/bans`                   | RSC+API | `user.ban` (search, ban/unban lower-ranked users) |
 | `/admin/news` (+ `new`, `[id]`) | RSC+CA | `news.manage`               |
 | `/admin/ai-news`                | RSC+CA | `ai.manage`                 |
 | `/admin/installer`              | RSC+CA | `installer.manage`          |
@@ -134,7 +134,10 @@ instead of a destructive row delete.
 | `/api/forum/topics`                   | GET/POST         | public/`forum.topic.create` | visible paged topics / audited topic creation |
 | `/api/forum/topics/[id]`              | PATCH            | `forum.edit_own` owner / `forum.moderate` | update title/body (stable slug) |
 | `/api/forum/replies`                  | GET/POST         | public/`forum.reply.create` | visible paged replies / audited create |
+| `/api/forum/reports`                  | POST             | active `forum.read` | topic/reply reports, one active per member and target |
 | `/api/admin/forum/topics/[id]`        | PATCH            | `forum.moderate` | lock/unlock, pin/unpin, hide/show |
+| `/api/admin/moderation/[id]`          | PATCH            | `moderation.resolve` | reviewing/resolved/dismissed with audit |
+| `/api/admin/bans/[id]`                | PATCH            | `user.ban` | 1-365 day ban or unban, rank gate, audit |
 | `/api/notifications`                  | GET/PATCH        | member          |                                   |
 | `/api/installer/manifest/[packageId]` | GET              | public          | signed manifest                   |
 | `/api/installer/report`               | POST             | installer token | install telemetry (opt-in)        |

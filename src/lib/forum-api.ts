@@ -1,9 +1,10 @@
 import { jsonError } from "@/lib/api";
 import { ForumError } from "@/services/forum";
+import { ModerationError } from "@/services/moderation";
 import { AuthorizationError } from "@/services/rbac";
 
 export function forumErrorResponse(error: unknown): Response {
-  if (error instanceof ForumError || error instanceof AuthorizationError) {
+  if (error instanceof ForumError || error instanceof ModerationError || error instanceof AuthorizationError) {
     return jsonError(error.status, error.code, error.message);
   }
   const kind = error instanceof Error ? error.name : typeof error;

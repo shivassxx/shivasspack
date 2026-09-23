@@ -68,6 +68,8 @@ import { createPackComment, listPackComments } from "../services/packs/comments"
 import { recordPackView } from "../services/packs/views";
 import { getMemberDownloadHistory, getPackDownloadOptions, resolvePackDownload, DownloadError } from "../services/packs/downloads";
 import { createForumReply, createForumTopic, forumPage, getForumCategory, getForumTopic, listForumCategories, listForumModeration, listForumReplies, listForumTopics, moderateForumTopic, updateForumTopic } from "../services/forum";
+import { decideReport, listModerationReports, reportForumContent } from "../services/moderation";
+import { listBanTargets, setUserBan } from "../services/admin/users";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -1775,6 +1777,123 @@ test("forum authors edit; moderators lock, pin and hide topics with consistent c
       for (const action of ["forum.topic.update", "forum.topic.pin", "forum.topic.lock", "forum.topic.show", "forum.topic.unlock", "forum.topic.unpin"]) {
         assert.ok(auditRows.some((entry) => entry.action === action), action);
       }
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("forum reports validate visibility and resolve with permission-gated audit", async () => {
+  const rollback = new Error("ROLLBACK_FORUM_REPORT_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const users = await tx.insert(schema.users).values([1, 2].map((number) => ({
+        username: `report-${number}-${suffix}`, displayName: `Report User ${number}`,
+        email: `report-${number}-${suffix}@example.invalid`, roleId: role.id,
+      }))).returning({ id: schema.users.id });
+      const [category] = await tx.insert(schema.forumCategories).values({ slug: `reports-${suffix}`,
+        name: "Reports Category" }).returning({ id: schema.forumCategories.id });
+      assert.ok(users[0] && users[1] && category);
+      const author: Actor = { id: users[0]!.id, displayName: "Report User 1", roleKey: "member",
+        status: "active", banUntil: null, permissions: new Set<PermissionKey>([
+          "forum.read", "forum.topic.create", "forum.reply.create",
+        ]) };
+      const moderator: Actor = { ...author, id: users[1]!.id,
+        permissions: new Set<PermissionKey>(["forum.read", "moderation.access", "moderation.resolve"]) };
+      const topic = await createForumTopic(db, author, { categoryId: category.id,
+        title: `Reported Topic ${suffix}`, body: "This is a real topic that can be reported." });
+      const reply = await createForumReply(db, author, { topicId: topic.id, body: "This reply can also be reported." });
+      const topicInput = { targetType: "topic", targetId: topic.id, reason: "Irrelevant or harmful forum content" };
+      await assert.rejects(reportForumContent(db, { ...author, permissions: new Set() }, topicInput), /forum.read/);
+      await assert.rejects(reportForumContent(db, { ...author, status: "suspended" }, topicInput), /Account unavailable/);
+      await assert.rejects(reportForumContent(db, author, { ...topicInput, reason: "short" }), /Gerekçe/);
+      await assert.rejects(reportForumContent(db, author, { ...topicInput, targetType: "pack" }), /hedefi/);
+      await assert.rejects(reportForumContent(db, author, { ...topicInput, targetId: "topic_unknown" }), /bulunamadı/);
+      const topicReport = await reportForumContent(db, author, topicInput);
+      const replyReport = await reportForumContent(db, author, { targetType: "reply", targetId: reply.id,
+        reason: "A legitimate moderation complaint about this reply" });
+      await assert.rejects(reportForumContent(db, author, topicInput), /açık bir raporun/);
+      await assert.rejects(listModerationReports(db, author), /moderation.access/);
+      const queue = await listModerationReports(db, moderator);
+      assert.equal(queue.find((item) => item.id === topicReport.id)?.target?.slug, topic.slug);
+      assert.equal(queue.find((item) => item.id === replyReport.id)?.target?.body, reply.body);
+      await assert.rejects(decideReport(db, author, topicReport.id, "resolved", "Investigated"), /moderation.resolve/);
+      await assert.rejects(decideReport(db, moderator, topicReport.id, "resolved", "x"), /Karar notu/);
+      const inReview = await decideReport(db, moderator, topicReport.id, "reviewing", null);
+      assert.equal(inReview.status, "reviewing");
+      await assert.rejects(reportForumContent(db, author, topicInput), /açık bir raporun/);
+      const decided = await decideReport(db, moderator, topicReport.id, "resolved", "Reviewed and handled");
+      assert.equal(decided.status, "resolved");
+      await assert.rejects(decideReport(db, moderator, topicReport.id, "dismissed", "Different decision"), /karara bağlandı/);
+      const dismissed = await decideReport(db, moderator, replyReport.id, "dismissed", "No violation found");
+      assert.equal(dismissed.status, "dismissed");
+      const [saved] = await tx.select({ resolvedById: schema.reports.resolvedById,
+        resolution: schema.reports.resolution, resolvedAt: schema.reports.resolvedAt })
+        .from(schema.reports).where(eq(schema.reports.id, topicReport.id));
+      assert.equal(saved?.resolvedById, moderator.id);
+      assert.equal(saved?.resolution, "Reviewed and handled");
+      assert.ok(saved?.resolvedAt);
+      await tx.update(schema.forumTopics).set({ status: "hidden" }).where(eq(schema.forumTopics.id, topic.id));
+      await assert.rejects(reportForumContent(db, author, topicInput), /bulunamadı/);
+      await assert.rejects(reportForumContent(db, author, { targetType: "reply", targetId: reply.id,
+        reason: "Reporting a reply on a hidden topic" }), /bulunamadı/);
+      const actions = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
+        .where(inArray(schema.auditLogs.targetId, [topicReport.id, replyReport.id]));
+      assert.deepEqual(actions.map((row) => row.action).sort(), [
+        "forum.report.create", "forum.report.create", "forum.report.dismissed", "forum.report.resolved", "forum.report.reviewing",
+      ]);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("forum moderators can ban lower-ranked users; active gates and audit honor unban", async () => {
+  const rollback = new Error("ROLLBACK_USER_BAN_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const roles = await tx.select({ id: schema.roles.id, key: schema.roles.key }).from(schema.roles)
+        .where(inArray(schema.roles.key, ["member", "moderator", "admin"]));
+      const role = (key: string) => roles.find((item) => item.key === key)?.id;
+      assert.ok(role("member") && role("moderator") && role("admin"));
+      const users = await tx.insert(schema.users).values([
+        { username: `ban-mod-${suffix}`, displayName: "Ban Mod", email: `ban-mod-${suffix}@example.invalid`, roleId: role("moderator")! },
+        { username: `ban-member-${suffix}`, displayName: "Ban Member", email: `ban-member-${suffix}@example.invalid`, roleId: role("member")! },
+        { username: `ban-admin-${suffix}`, displayName: "Ban Admin", email: `ban-admin-${suffix}@example.invalid`, roleId: role("admin")! },
+      ]).returning({ id: schema.users.id });
+      assert.equal(users.length, 3);
+      const mod: Actor = { id: users[0]!.id, displayName: "Ban Mod", roleKey: "moderator",
+        status: "active", banUntil: null, permissions: new Set<PermissionKey>(["user.ban"]) };
+      const targetId = users[1]!.id;
+      const ban = { action: "ban", days: 7, reason: "Repeated forum rule violations" };
+      await assert.rejects(setUserBan(db, { ...mod, permissions: new Set() }, targetId, ban), /user.ban/);
+      await assert.rejects(setUserBan(db, mod, mod.id!, ban), /Kendini/);
+      await assert.rejects(setUserBan(db, mod, users[2]!.id, ban), /seviyenin altındaki/);
+      await assert.rejects(setUserBan(db, mod, targetId, { ...ban, days: 400 }), /Süre/);
+      await assert.rejects(setUserBan(db, mod, targetId, { ...ban, reason: "short" }), /Süre/);
+      await assert.rejects(setUserBan(db, mod, targetId, { action: "unban" }), /yasaklı değil/);
+      const selected = await listBanTargets(db, mod, `ban-member-${suffix}`);
+      assert.equal(selected.items.length, 1);
+      assert.equal(selected.items[0]?.manageable, true);
+      const saved = await setUserBan(db, mod, targetId, ban);
+      assert.ok(saved.banUntil && saved.banUntil > new Date());
+      assert.equal(saved.bannedReason, ban.reason);
+      const bannedActor: Actor = { ...mod, id: targetId, banUntil: saved.banUntil,
+        permissions: new Set<PermissionKey>(["forum.topic.create"]) };
+      await assert.rejects(createForumTopic(db, bannedActor, { categoryId: "fcat_genel",
+        title: "Banned author topic", body: "Banned author is not permitted to post." }), /Account suspended/);
+      assert.ok((await listBanTargets(db, mod, "")).items.some((item) => item.id === targetId));
+      const unbanned = await setUserBan(db, mod, targetId, { action: "unban" });
+      assert.equal(unbanned.banUntil, null);
+      assert.equal(unbanned.bannedReason, null);
+      assert.ok(!(await listBanTargets(db, mod, "")).items.some((item) => item.id === targetId));
+      const actions = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
+        .where(eq(schema.auditLogs.targetId, targetId));
+      assert.deepEqual(actions.map((item) => item.action).sort(), ["user.ban", "user.unban"]);
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }
