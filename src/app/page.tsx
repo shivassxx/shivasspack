@@ -3,6 +3,7 @@ import { ArrowRight, Gauge, ShieldCheck, Wrench, Sparkles, Crosshair, Palette, L
 import { getDatabase } from "@/db/client";
 import { PackCard } from "@/features/packs/pack-card";
 import { siteConfig } from "@/lib/site-config";
+import { getSiteName } from "@/lib/site-name";
 import { listHomepageSections, type HomepageKey } from "@/services/homepage";
 import { listPublicCategories, listPublishedPacks, type PackListItem } from "@/services/packs/public";
 
@@ -45,7 +46,7 @@ function PackSection({ section, items }: { section: keyof typeof packSectionTitl
 
 export default async function HomePage() {
   const db = getDatabase().db;
-  const [categories, sections] = await Promise.all([listPublicCategories(db), listHomepageSections(db)]);
+  const [categories, sections, siteName] = await Promise.all([listPublicCategories(db), listHomepageSections(db), getSiteName()]);
   const visible = sections.filter((section) => section.enabled);
   const packKeys = visible.map((section) => section.key).filter((key): key is Exclude<HomepageKey, "hero"> => key !== "hero");
   const packResults = await Promise.all(packKeys.map((key) => listPublishedPacks(db, {
@@ -66,7 +67,7 @@ export default async function HomePage() {
             FiveM için seçilmiş içerik
           </p>
           <h1 className="max-w-3xl text-4xl font-bold tracking-tight text-white sm:text-6xl">
-            SHIVASS PACK — grafik, PvP ve <span className="text-accent-500">performans</span>{" "}
+             {siteName} — grafik, PvP ve <span className="text-accent-500">performans</span>{" "}
             paketleri tek yerde.
           </h1>
           <p className="mt-5 max-w-2xl text-base leading-relaxed text-zinc-400 sm:text-lg">
@@ -122,7 +123,7 @@ export default async function HomePage() {
       <section aria-labelledby="why-heading" className="border-t border-line bg-surface-900/50">
         <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6">
           <h2 id="why-heading" className="text-lg font-semibold text-white">
-            Neden {siteConfig.name}?
+             Neden {siteName}?
           </h2>
           <div className="mt-5 grid gap-4 md:grid-cols-3">
             {features.map((f) => (

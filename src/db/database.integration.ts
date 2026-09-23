@@ -42,7 +42,7 @@ import {
   updateAdminPack,
 } from "../services/admin/packs";
 import { listAdminHomepageSections, listHomepageSections, updateHomepageSections } from "../services/homepage";
-import { getAdminRegistrationSetting, registrationEnabled, updateRegistrationSetting } from "../services/admin/settings";
+import { getAdminRegistrationSetting, readSiteName, registrationEnabled, updateRegistrationSetting, updateSiteName } from "../services/admin/settings";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -960,6 +960,36 @@ test("registration switch is live, permission-gated and audit-logged", async () 
       const audit = await tx.select({ action: schema.auditLogs.action, targetId: schema.auditLogs.targetId })
         .from(schema.auditLogs).where(eq(schema.auditLogs.actorId, user.id));
       assert.deepEqual(audit, [{ action: "feature_flag.update", targetId: "registrations_enabled" }]);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("site name changes are permission-gated, visible and audited", async () => {
+  const rollback = new Error("ROLLBACK_SITE_NAME_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "admin"));
+      assert.ok(role);
+      const [user] = await tx.insert(schema.users).values({
+        username: `sitename-${suffix}`, displayName: "Site Editor", email: `sitename-${suffix}@example.invalid`, roleId: role.id,
+      }).returning({ id: schema.users.id });
+      assert.ok(user);
+      const actor: Actor = { id: user.id, displayName: "Site Editor", roleKey: "custom", status: "active",
+        banUntil: null, permissions: new Set(["admin.settings"]) };
+      await assert.rejects(updateSiteName(db, { ...actor, permissions: new Set() }, "New Name"), /Missing permission/);
+      await assert.rejects(updateSiteName(db, actor, "a"), /3-64/);
+      await assert.rejects(updateSiteName(db, actor, "Bad\u0000Name"), /3-64/);
+      const result = await updateSiteName(db, actor, "  Test   Hub  ");
+      assert.equal(result.name, "Test Hub");
+      assert.equal(await readSiteName(db), "Test Hub");
+      const [audit] = await tx.select({ action: schema.auditLogs.action, targetId: schema.auditLogs.targetId, before: schema.auditLogs.before, after: schema.auditLogs.after })
+        .from(schema.auditLogs).where(eq(schema.auditLogs.actorId, user.id));
+      assert.equal(audit?.action, "site_setting.update");
+      assert.equal(audit.targetId, "site_name");
+      assert.equal(audit.after?.value, "Test Hub");
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }

@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { MonitorPlay, Menu } from "lucide-react";
-import { siteConfig } from "@/lib/site-config";
 import { getCurrentActor } from "@/lib/auth-context";
 import { NavSearch } from "@/features/layout/nav-search";
 import { UserMenu } from "@/features/layout/user-menu";
 import { MobileNav } from "@/features/layout/mobile-nav";
 import { SiteNav } from "@/features/layout/site-nav";
 import { primaryNavItems } from "@/lib/navigation";
+import { BrandName } from "@/components/ui/brand-name";
 
-export async function SiteHeader() {
+export async function SiteHeader({ siteName }: { siteName: string }) {
   // Gerçek oturum: çerez okunduğu için sayfalar dinamik render olur.
   const actor = await getCurrentActor();
   const menuUser =
@@ -22,13 +22,13 @@ export async function SiteHeader() {
         <Link
           href="/"
           className="flex shrink-0 items-center gap-2 font-semibold tracking-tight text-white"
-          aria-label={`${siteConfig.name} ana sayfa`}
+          aria-label={`${siteName} ana sayfa`}
         >
           <span className="grid size-7 place-items-center rounded-md bg-accent-600 text-white">
             <MonitorPlay className="size-4" aria-hidden />
           </span>
           <span className="hidden sm:inline">
-            SHIVASS <span className="text-accent-500">PACK</span>
+             <BrandName name={siteName} />
           </span>
         </Link>
 

@@ -4,6 +4,7 @@ import { SiteHeader } from "@/features/layout/site-header";
 import { SiteFooter } from "@/features/layout/site-footer";
 import { Toaster } from "@/components/ui/toaster";
 import { siteConfig } from "@/lib/site-config";
+import { getSiteName } from "@/lib/site-name";
 import "@/styles/globals.css";
 
 const inter = Inter({
@@ -18,30 +19,33 @@ const jetbrains = JetBrains_Mono({
   display: "swap",
 });
 
-export const metadata: Metadata = {
+export async function generateMetadata(): Promise<Metadata> {
+  const name = await getSiteName();
+  return {
   metadataBase: new URL(siteConfig.url),
   title: {
-    default: `${siteConfig.name} — ${siteConfig.tagline}`,
-    template: `%s · ${siteConfig.name}`,
+    default: `${name} — ${siteConfig.tagline}`,
+    template: `%s · ${name}`,
   },
   description: siteConfig.description,
   keywords: ["FiveM", "graphics pack", "ReShade", "ENB", "PvP", "optimization"],
   openGraph: {
     type: "website",
-    siteName: siteConfig.name,
-    title: `${siteConfig.name} — ${siteConfig.tagline}`,
+    siteName: name,
+    title: `${name} — ${siteConfig.tagline}`,
     description: siteConfig.description,
     url: siteConfig.url,
     locale: "tr_TR",
   },
   twitter: {
     card: "summary_large_image",
-    title: siteConfig.name,
+    title: name,
     description: siteConfig.description,
   },
   robots: { index: true, follow: true },
   alternates: { canonical: "/" },
-};
+  };
+}
 
 export const viewport: Viewport = {
   themeColor: "#09090b",
@@ -50,9 +54,10 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const siteName = await getSiteName();
   return (
     <html lang="tr" className={`${inter.variable} ${jetbrains.variable}`} suppressHydrationWarning>
       <body className="min-h-screen flex flex-col bg-surface-950 text-zinc-200 antialiased">
@@ -62,11 +67,11 @@ export default function RootLayout({
         >
           İçeriğe atla
         </a>
-        <SiteHeader />
+        <SiteHeader siteName={siteName} />
         <main id="main-content" tabIndex={-1} className="flex-1 outline-none">
           {children}
         </main>
-        <SiteFooter />
+        <SiteFooter siteName={siteName} />
         <Toaster />
       </body>
     </html>
