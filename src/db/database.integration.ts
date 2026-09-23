@@ -41,6 +41,7 @@ import {
   listAdminPacks,
   updateAdminPack,
 } from "../services/admin/packs";
+import { listAdminHomepageSections, listHomepageSections, updateHomepageSections } from "../services/homepage";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -649,6 +650,7 @@ test("public pack queries expose only approved non-demo content with filters", a
           status: "approved",
           publishedAt: new Date(Date.now() - 2 * 86400000),
           isKnown: true,
+          featured: true,
           downloadCount: 10,
           ratingAvg: "4.5",
           ratingCount: 2,
@@ -681,6 +683,7 @@ test("public pack queries expose only approved non-demo content with filters", a
           status: "approved",
           publishedAt: new Date(),
           isDemo: true,
+          featured: true,
         },
         {
           slug: `draft-${suffix}`,
@@ -711,6 +714,8 @@ test("public pack queries expose only approved non-demo content with filters", a
 
       const known = await listPublishedPacks(db, { known: true });
       assert.deepEqual(known.items.map((item) => item.id), [first.id]);
+      const featured = await listPublishedPacks(db, { featured: true });
+      assert.deepEqual(featured.items.map((item) => item.id), [first.id]);
       const downloads = await listPublishedPacks(db, { sort: "downloads" });
       assert.equal(downloads.items[0]?.id, second.id);
 
@@ -890,4 +895,41 @@ test("pack admin CRUD enforces publish/feature/archive gates and audits changes"
   } catch (error) {
     if (error !== rollback) throw error;
   }
+});
+
+test("homepage builder enforces permissions, order, visibility and transaction audit", async () => {
+  const rollback = new Error("ROLLBACK_HOMEPAGE_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "admin"));
+      assert.ok(role);
+      const [user] = await tx.insert(schema.users).values({
+        username: `homepage-${suffix}`, displayName: "Homepage Editor",
+        email: `homepage-${suffix}@example.invalid`, roleId: role.id,
+      }).returning({ id: schema.users.id });
+      assert.ok(user);
+      const actor: Actor = { id: user.id, displayName: "Homepage Editor", roleKey: "custom",
+        permissions: new Set(["homepage.manage"]), status: "active", banUntil: null };
+      const denied: Actor = { ...actor, permissions: new Set() };
+      const sections = [
+        { key: "known", enabled: true }, { key: "trending", enabled: true },
+        { key: "hero", enabled: false }, { key: "featured", enabled: true },
+      ];
+      await assert.rejects(listAdminHomepageSections(db, denied), /Missing permission/);
+      await assert.rejects(updateHomepageSections(db, denied, sections), /Missing permission/);
+      const updated = await updateHomepageSections(db, actor, sections);
+      assert.deepEqual(updated.map((section) => section.key), ["known", "trending", "hero", "featured"]);
+      const publicRows = await listHomepageSections(db);
+      assert.deepEqual(publicRows.map((section) => section.key), updated.map((section) => section.key));
+      assert.equal(publicRows[2]?.enabled, false);
+      const audit = await tx.select({ action: schema.auditLogs.action, after: schema.auditLogs.after })
+        .from(schema.auditLogs).where(eq(schema.auditLogs.actorId, user.id));
+      assert.equal(audit.length, 1);
+      assert.equal(audit[0]?.action, "homepage.update");
+      assert.deepEqual((audit[0]?.after as { sections: typeof updated }).sections, updated);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
 });

@@ -22,6 +22,7 @@ export type PublicPackFilters = {
   q?: string;
   category?: string;
   known?: boolean;
+  featured?: boolean;
   sort?: PackSort;
   page?: number;
   pageSize?: number;
@@ -93,7 +94,7 @@ function normalizeFilters(filters: PublicPackFilters) {
   const pageSize = Number.isInteger(filters.pageSize)
     ? Math.min(48, Math.max(1, filters.pageSize!))
     : PACK_PAGE_SIZE;
-  return { q, category, known: filters.known === true, sort, page, pageSize };
+  return { q, category, known: filters.known === true, featured: filters.featured === true, sort, page, pageSize };
 }
 
 function publicConditions(now: Date, filters: ReturnType<typeof normalizeFilters>): SQL[] {
@@ -105,6 +106,7 @@ function publicConditions(now: Date, filters: ReturnType<typeof normalizeFilters
   ];
   if (filters.category) conditions.push(eq(s.packCategories.slug, filters.category));
   if (filters.known) conditions.push(eq(s.packs.isKnown, true));
+  if (filters.featured) conditions.push(eq(s.packs.featured, true));
   if (filters.q) {
     conditions.push(sql`
       to_tsvector('simple', ${s.packs.title} || ' ' || ${s.packs.excerpt} || ' ' || ${s.packs.description})

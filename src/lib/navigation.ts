@@ -6,8 +6,6 @@ export const primaryNavItems: readonly NavItem[] = [
   { href: "/packs/category/pvp", label: "PvP" },
   { href: "/packs/category/reshade", label: "ReShade" },
   { href: "/packs/category/enb", label: "ENB" },
-  { href: "/forum", label: "Forum" },
-  { href: "/news", label: "Haberler" },
 ] as const;
 
 export function isNavItemActive(pathname: string, href: string): boolean {

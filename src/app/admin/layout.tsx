@@ -47,7 +47,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <h1 className="mt-2 text-2xl font-semibold text-white">İçerik yönetimi</h1>
         <p className="mt-1 text-sm text-zinc-500">Değişiklikler yetki kontrolünden geçer ve denetim kaydına yazılır.</p>
       </header>
-      <AdminNav />
+      <AdminNav permissions={[...session.actor.permissions]} />
       <div className="py-7">{children}</div>
     </div>
   );

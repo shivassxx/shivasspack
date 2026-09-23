@@ -5,17 +5,18 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const items = [
-  { href: "/admin", label: "Genel" },
-  { href: "/admin/packs", label: "Paketler" },
-  { href: "/admin/categories", label: "Kategoriler" },
-  { href: "/admin/tags", label: "Etiketler" },
+  { href: "/admin", label: "Genel", permission: "admin.dashboard" },
+  { href: "/admin/packs", label: "Paketler", permission: "pack.manage" },
+  { href: "/admin/categories", label: "Kategoriler", permission: "category.manage" },
+  { href: "/admin/tags", label: "Etiketler", permission: "tag.manage" },
+  { href: "/admin/homepage", label: "Ana sayfa", permission: "homepage.manage" },
 ] as const;
 
-export function AdminNav() {
+export function AdminNav({ permissions }: { permissions: string[] }) {
   const pathname = usePathname();
   return (
     <nav aria-label="Yönetim bölümleri" className="flex gap-1 overflow-x-auto border-b border-line">
-      {items.map((item) => {
+      {items.filter((item) => permissions.includes(item.permission)).map((item) => {
         const active = item.href === "/admin" ? pathname === item.href : pathname.startsWith(item.href);
         return (
           <Link

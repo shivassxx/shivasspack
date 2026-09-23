@@ -14,8 +14,6 @@ const columns = [
   {
     title: "Topluluk",
     links: [
-      { href: "/forum", label: "Forum" },
-      { href: "/news", label: "Haberler" },
       { href: "/guidelines", label: "Topluluk kuralları" },
     ],
   },

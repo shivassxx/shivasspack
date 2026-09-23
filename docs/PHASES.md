@@ -186,3 +186,22 @@ all test rows (users, packs, categories, tags, audit rows) were removed.
   constraint`) and returned 500 instead of 409.
 - Uploads (S3/files) remain out of scope until the download phase; `docs/ROUTES.md`
   lists the implemented admin pages and endpoints.
+
+## Phase 6 checkpoint (in progress)
+
+Status (2026-09-23): the first dynamic homepage slice is live. `/` reads enabled
+`homepage_sections` in DB order, draws real public featured/trending/known packs
+and enabled categories, and shows an honest empty state for empty sections.
+`/admin/homepage` and `GET/PUT /api/admin/homepage` let `homepage.manage` reorder
+and toggle only the four implemented sections (hero, featured, trending, known).
+The update is validated, permission-checked and audited in one DB transaction.
+Unimplemented Forum/News navigation links and the inactive installation-guide
+CTA have been removed/replaced with working destinations.
+
+`npm run check` passed TypeScript, lint, 96 unit tests and production build;
+`npm run db:test` passed 19 real-DB tests. Production HTTP E2E confirmed API
+401/403/400, section ordering/visibility on the public homepage, admin UI,
+audit insertion and restoration of the original section settings. The user
+`shivass` was assigned the seeded `super_admin` role (36/36 grants) in the local
+database with a `user.role.assign` audit row. No site-settings or feature-flags
+editor has been implemented yet, so Phase 6 remains open.
