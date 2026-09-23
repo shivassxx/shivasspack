@@ -283,3 +283,14 @@ passes 24 tests, including repeat writes, two accounts, visibility and rollback.
 Standalone HTTP confirmed guest 401/login redirect, repeated PUT/DELETE without
 counter drift, owner-only saved listing, the saved state on the detail page and
 archived-pack 404. Temporary users, sessions, category and pack were removed.
+
+The second interaction adds package likes with the same public-visibility and
+active-member rules. `PUT/DELETE /api/packs/[slug]/like` sets/unsets a user's
+pack like idempotently, maintains `like_count` in the same locked transaction,
+and the detail page shows the user's state. The polymorphic `likes` table is
+filtered to `target_type=pack`, leaving other target kinds untouched. The real
+PostgreSQL suite now has 25 tests, including two users and repeated requests.
+`npm run check` passed typecheck, lint, 100 unit tests and production build.
+Standalone HTTP confirmed guest 401, unknown/archived pack 404, two-user
+idempotent counts and the detail button's live pressed state. Temporary users,
+sessions, category, pack and likes were removed.

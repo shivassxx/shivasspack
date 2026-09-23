@@ -26,7 +26,7 @@ export function BookmarkButton({ slug, initialSaved, initialCount }: { slug: str
     } finally { setPending(false); }
   }
 
-  return <div className="mt-5 flex flex-wrap items-center gap-3">
+  return <div className="flex flex-wrap items-center gap-3">
     <button type="button" aria-pressed={saved} disabled={pending} onClick={() => void toggle()}
       className="inline-flex items-center gap-2 rounded-md border border-line bg-surface-900 px-4 py-2 text-sm text-zinc-200 transition hover:border-accent-500 hover:text-white disabled:opacity-50">
       <Bookmark className="size-4" fill={saved ? "currentColor" : "none"} aria-hidden />

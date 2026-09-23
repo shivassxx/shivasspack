@@ -5,7 +5,7 @@ import { createDatabase, type Database } from "./connection";
 import { applicationRole, appendOnlyTables, migrationRole } from "./access";
 import { checkDatabase } from "../services/health";
 import { seedDatabase } from "./seed-data";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import * as schema from "./schema";
 import {
   AuthError,
@@ -47,6 +47,7 @@ import { createAdminRole, listAdminRoles, updateAdminRole } from "../services/ad
 import { assignUserRole, listAdminUsers } from "../services/admin/users";
 import { loadActor } from "../services/rbac";
 import { getBookmarkState, getMemberBookmarks, setPackBookmark } from "../services/packs/bookmarks";
+import { getPackLikeState, setPackLike } from "../services/packs/likes";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -784,6 +785,54 @@ test("bookmarks are idempotent, private, visibility-gated and keep counters cons
       assert.equal((await getMemberBookmarks(db, second)).total, 0);
       await assert.rejects(setPackBookmark(db, second, slug, false), /Paket bulunamadı/);
       const [stored] = await tx.select({ count: schema.packs.bookmarkCount }).from(schema.packs).where(eq(schema.packs.id, pack.id));
+      assert.equal(stored?.count, 1);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});
+
+test("pack likes are idempotent, isolated by target type and visibility-gated", async () => {
+  const rollback = new Error("ROLLBACK_PACK_LIKE_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const users = await tx.insert(schema.users).values([1, 2].map((number) => ({
+        username: `liker-${number}-${suffix}`, displayName: `Liker ${number}`,
+        email: `liker-${number}-${suffix}@example.invalid`, roleId: role.id,
+      }))).returning({ id: schema.users.id });
+      const [category] = await tx.insert(schema.packCategories).values({ slug: `like-${suffix}`, name: "Like Category", kind: "pvp" })
+        .returning({ id: schema.packCategories.id });
+      assert.ok(category && users.length === 2);
+      const slug = `like-${suffix}`;
+      const [pack] = await tx.insert(schema.packs).values({ slug, title: "Like Test Pack", excerpt: "Like test",
+        description: "A real published pack for likes.", categoryId: category.id, creatorId: users[0]!.id,
+        status: "approved", publishedAt: new Date(Date.now() - 60000),
+      }).returning({ id: schema.packs.id });
+      assert.ok(pack);
+      const actor: Actor = { id: users[0]!.id, displayName: "Liker 1", roleKey: "custom",
+        status: "active", banUntil: null, permissions: new Set(["pack.view"]) };
+      const second: Actor = { ...actor, id: users[1]!.id };
+      await assert.rejects(setPackLike(db, { ...actor, permissions: new Set() }, slug, true), /Missing permission/);
+      await assert.rejects(setPackLike(db, { ...actor, status: "suspended" }, slug, true));
+      await assert.rejects(setPackLike(db, actor, "bad slug", true), /Paket bulunamadı/);
+      await tx.insert(schema.likes).values({ targetType: "topic", targetId: pack.id, userId: actor.id! });
+      assert.equal(await getPackLikeState(db, actor, pack.id), false);
+      assert.deepEqual(await setPackLike(db, actor, slug, true), { liked: true, likeCount: 1 });
+      assert.deepEqual(await setPackLike(db, actor, slug, true), { liked: true, likeCount: 1 });
+      assert.equal(await getPackLikeState(db, actor, pack.id), true);
+      assert.equal(await getPackLikeState(db, second, pack.id), false);
+      assert.deepEqual(await setPackLike(db, second, slug, true), { liked: true, likeCount: 2 });
+      assert.deepEqual(await setPackLike(db, actor, slug, false), { liked: false, likeCount: 1 });
+      assert.deepEqual(await setPackLike(db, actor, slug, false), { liked: false, likeCount: 1 });
+      const [topic] = await tx.select({ id: schema.likes.id }).from(schema.likes).where(and(
+        eq(schema.likes.targetType, "topic"), eq(schema.likes.targetId, pack.id), eq(schema.likes.userId, actor.id!)));
+      assert.ok(topic);
+      await tx.update(schema.packs).set({ status: "archived" }).where(eq(schema.packs.id, pack.id));
+      await assert.rejects(setPackLike(db, second, slug, false), /Paket bulunamadı/);
+      const [stored] = await tx.select({ count: schema.packs.likeCount }).from(schema.packs).where(eq(schema.packs.id, pack.id));
       assert.equal(stored?.count, 1);
       throw rollback;
     });

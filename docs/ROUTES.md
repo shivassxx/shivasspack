@@ -111,7 +111,7 @@ instead of a destructive row delete.
 | `/api/packs/[slug]/download`          | GET              | public          | 302 to mirror, rate-limited       |
 | `/api/packs/[slug]/view`              | POST             | public          | beacon, deduped                   |
 | `/api/packs/[slug]/rate`              | POST             | member          | 1..5                              |
-| `/api/packs/[slug]/like`              | POST             | member          | toggle                            |
+| `/api/packs/[slug]/like`              | PUT/DELETE       | member          | idempotent like/remove + count    |
 | `/api/packs/[slug]/bookmark`          | PUT/DELETE       | member          | idempotent save/remove + count    |
 | `/api/packs/[slug]/comments`          | GET/POST         | public/member   | create needs auth                 |
 | `/api/search`                         | GET              | public          | unified FTS                       |
