@@ -212,6 +212,31 @@ export async function listPublishedPacks(db: Database, input: PublicPackFilters 
   };
 }
 
+export async function listBookmarkedPacks(db: Database, userId: string, inputPage = 1): Promise<PackListResult> {
+  const page = Number.isInteger(inputPage) ? Math.min(1000, Math.max(1, inputPage)) : 1;
+  const where = and(eq(s.bookmarks.userId, userId), ...publicConditions(new Date(), normalizeFilters({})));
+  const [items, totals] = await Promise.all([
+    db.select(listSelection).from(s.bookmarks)
+      .innerJoin(s.packs, eq(s.packs.id, s.bookmarks.packId))
+      .innerJoin(s.packCategories, eq(s.packCategories.id, s.packs.categoryId))
+      .innerJoin(s.users, eq(s.users.id, s.packs.creatorId))
+      .where(where).orderBy(desc(s.bookmarks.createdAt), asc(s.bookmarks.id))
+      .limit(PACK_PAGE_SIZE).offset((page - 1) * PACK_PAGE_SIZE),
+    db.select({ value: count() }).from(s.bookmarks)
+      .innerJoin(s.packs, eq(s.packs.id, s.bookmarks.packId))
+      .innerJoin(s.packCategories, eq(s.packCategories.id, s.packs.categoryId))
+      .where(where),
+  ]);
+  const total = Number(totals[0]?.value ?? 0);
+  const tagsByPack = await loadTags(db, items.map((item) => item.id));
+  return {
+    items: items.map((item) => ({ ...item, fileSizeBytes: item.fileSizeBytes?.toString() ?? null,
+      publishedAt: item.publishedAt!, tags: tagsByPack.get(item.id) ?? [] })),
+    total, page, pageSize: PACK_PAGE_SIZE, pageCount: Math.max(1, Math.ceil(total / PACK_PAGE_SIZE)),
+    filters: { q: "", known: false, sort: "newest" },
+  };
+}
+
 export async function listPublicCategories(db: Database): Promise<PublicCategory[]> {
   const now = new Date();
   const rows = await db

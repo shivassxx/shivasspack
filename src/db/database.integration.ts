@@ -46,6 +46,7 @@ import { getAdminRegistrationSetting, getAdminSiteDescription, readSiteDescripti
 import { createAdminRole, listAdminRoles, updateAdminRole } from "../services/admin/roles";
 import { assignUserRole, listAdminUsers } from "../services/admin/users";
 import { loadActor } from "../services/rbac";
+import { getBookmarkState, getMemberBookmarks, setPackBookmark } from "../services/packs/bookmarks";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -735,6 +736,58 @@ test("public pack queries expose only approved non-demo content with filters", a
   } catch (error) {
     if (error !== rollback) throw error;
   }
+});
+
+test("bookmarks are idempotent, private, visibility-gated and keep counters consistent", async () => {
+  const rollback = new Error("ROLLBACK_BOOKMARK_TEST");
+  try {
+    await app.db.transaction(async (tx) => {
+      const db = tx as unknown as Database;
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const [role] = await tx.select({ id: schema.roles.id }).from(schema.roles).where(eq(schema.roles.key, "member"));
+      assert.ok(role);
+      const users = await tx.insert(schema.users).values([1, 2].map((number) => ({
+        username: `bookmark-${number}-${suffix}`, displayName: `Reader ${number}`,
+        email: `bookmark-${number}-${suffix}@example.invalid`, roleId: role.id,
+      }))).returning({ id: schema.users.id });
+      assert.equal(users.length, 2);
+      const [category] = await tx.insert(schema.packCategories).values({ slug: `saved-${suffix}`, name: "Saved Category", kind: "graphics" })
+        .returning({ id: schema.packCategories.id });
+      assert.ok(category);
+      const slug = `saved-${suffix}`;
+      const [pack] = await tx.insert(schema.packs).values({ slug, title: "Saved Test Pack", excerpt: "Bookmark test",
+        description: "A real public pack for bookmark checks.", categoryId: category.id, creatorId: users[0]!.id,
+        status: "approved", publishedAt: new Date(Date.now() - 60000),
+      }).returning({ id: schema.packs.id });
+      const [draft] = await tx.insert(schema.packs).values({ slug: `private-${suffix}`, title: "Draft", excerpt: "Not public",
+        description: "Not public", categoryId: category.id, creatorId: users[0]!.id, status: "draft" })
+        .returning({ id: schema.packs.id });
+      assert.ok(pack && draft);
+      const actor: Actor = { id: users[0]!.id, displayName: "Reader 1", roleKey: "custom",
+        status: "active", banUntil: null, permissions: new Set(["pack.view"]) };
+      const second: Actor = { ...actor, id: users[1]!.id };
+      await assert.rejects(setPackBookmark(db, { ...actor, permissions: new Set() }, slug, true), /Missing permission/);
+      await assert.rejects(setPackBookmark(db, { ...actor, status: "suspended" }, slug, true));
+      await assert.rejects(setPackBookmark(db, actor, `private-${suffix}`, true), /Paket bulunamadı/);
+      await assert.rejects(setPackBookmark(db, actor, "invalid slug", true), /Paket bulunamadı/);
+      assert.deepEqual(await setPackBookmark(db, actor, slug, true), { saved: true, bookmarkCount: 1 });
+      assert.deepEqual(await setPackBookmark(db, actor, slug, true), { saved: true, bookmarkCount: 1 });
+      assert.equal(await getBookmarkState(db, actor, pack.id), true);
+      assert.equal(await getBookmarkState(db, second, pack.id), false);
+      assert.equal((await getMemberBookmarks(db, second)).total, 0);
+      assert.equal((await getMemberBookmarks(db, actor)).items[0]?.slug, slug);
+      assert.deepEqual(await setPackBookmark(db, second, slug, true), { saved: true, bookmarkCount: 2 });
+      assert.deepEqual(await setPackBookmark(db, actor, slug, false), { saved: false, bookmarkCount: 1 });
+      assert.deepEqual(await setPackBookmark(db, actor, slug, false), { saved: false, bookmarkCount: 1 });
+      assert.equal((await getMemberBookmarks(db, actor)).total, 0);
+      await tx.update(schema.packCategories).set({ enabled: false }).where(eq(schema.packCategories.id, category.id));
+      assert.equal((await getMemberBookmarks(db, second)).total, 0);
+      await assert.rejects(setPackBookmark(db, second, slug, false), /Paket bulunamadı/);
+      const [stored] = await tx.select({ count: schema.packs.bookmarkCount }).from(schema.packs).where(eq(schema.packs.id, pack.id));
+      assert.equal(stored?.count, 1);
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
 });
 
 test("catalog admin mutations enforce permissions and append audit records", async () => {

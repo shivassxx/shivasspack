@@ -3,6 +3,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Bookmark, Download, Eye, Heart, ShieldCheck, Star } from "lucide-react";
 import { getDatabase } from "@/db/client";
+import { BookmarkButton } from "@/features/packs/bookmark-button";
+import { getCurrentSession } from "@/lib/auth-context";
+import { getBookmarkState } from "@/services/packs/bookmarks";
 import { getPublishedPack } from "@/services/packs/public";
 import { formatBytes, formatCompact, formatDate } from "@/lib/utils";
 
@@ -39,6 +42,9 @@ export default async function PackDetailPage({ params }: { params: Promise<{ slu
   const { slug } = await params;
   const pack = await getPublishedPack(getDatabase().db, slug);
   if (!pack) notFound();
+  const session = await getCurrentSession();
+  const canBookmark = Boolean(session?.actor.permissions.has("pack.view"));
+  const isSaved = canBookmark ? await getBookmarkState(getDatabase().db, session!.actor, pack.id) : false;
   const sourceUrl = safeExternalUrl(pack.sourceUrl);
   const requirements = Object.entries(pack.requirements).filter(
     ([, value]) => typeof value === "string" || typeof value === "number" || typeof value === "boolean",
@@ -72,6 +78,8 @@ export default async function PackDetailPage({ params }: { params: Promise<{ slu
               {pack.tags.map((tag) => <li key={tag.slug} className="rounded bg-surface-800 px-2 py-1 text-xs text-zinc-400">#{tag.name}</li>)}
             </ul>
           ) : null}
+          {canBookmark ? <BookmarkButton slug={pack.slug} initialSaved={isSaved} initialCount={pack.bookmarkCount} />
+            : <Link href={`/login?next=${encodeURIComponent(`/packs/${pack.slug}`)}`} className="mt-5 inline-flex items-center gap-2 text-sm text-accent-400 hover:text-accent-300"><Bookmark className="size-4" aria-hidden />Kaydetmek için giriş yap</Link>}
         </div>
 
         <aside className="rounded-xl border border-line bg-surface-900 p-4" aria-label="Paket özeti">

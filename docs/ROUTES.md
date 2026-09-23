@@ -112,7 +112,7 @@ instead of a destructive row delete.
 | `/api/packs/[slug]/view`              | POST             | public          | beacon, deduped                   |
 | `/api/packs/[slug]/rate`              | POST             | member          | 1..5                              |
 | `/api/packs/[slug]/like`              | POST             | member          | toggle                            |
-| `/api/packs/[slug]/bookmark`          | POST             | member          | toggle                            |
+| `/api/packs/[slug]/bookmark`          | PUT/DELETE       | member          | idempotent save/remove + count    |
 | `/api/packs/[slug]/comments`          | GET/POST         | public/member   | create needs auth                 |
 | `/api/search`                         | GET              | public          | unified FTS                       |
 | `/api/forum/topics`                   | GET/POST         | public/member   | create needs auth                 |

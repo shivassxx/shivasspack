@@ -268,3 +268,18 @@ Standalone HTTP verified guest/member rejection, invalid input, live metadata
 (including Open Graph/Twitter), footer and inherited hero, independent custom
 hero text and transactional audit. Temporary users, sessions and audit rows were
 removed; the original setting and hero configuration were restored.
+
+## Phase 7 checkpoint (downloads/interactions, in progress)
+
+The first member interaction is a real bookmark flow: `/packs/[slug]` offers a
+save/remove action, `/bookmarks` lists only currently public saved packs with
+pagination, and the account menu links to that list. PUT and DELETE on
+`/api/packs/[slug]/bookmark` are idempotent; service-level active-account and
+`pack.view` checks, public-visibility rules and transactional pack-row locking
+keep per-user bookmarks and the denormalized counter consistent. Hidden/draft
+packs cannot be bookmarked or displayed as saved. Real PostgreSQL coverage
+passes 24 tests, including repeat writes, two accounts, visibility and rollback.
+`npm run check` passed typecheck, lint, 100 unit tests and production build.
+Standalone HTTP confirmed guest 401/login redirect, repeated PUT/DELETE without
+counter drift, owner-only saved listing, the saved state on the detail page and
+archived-pack 404. Temporary users, sessions, category and pack were removed.
