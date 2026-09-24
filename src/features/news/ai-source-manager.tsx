@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "@/components/ui/toaster";
 import { requestJson } from "@/lib/client-api";
 import type { listAiSources } from "@/services/ai-sources";
+import type { FeedItem } from "@/lib/news-feed";
 
 type Source = Awaited<ReturnType<typeof listAiSources>>[number];
 
@@ -12,6 +13,7 @@ export function AiSourceManager({ sources }: { sources: Source[] }) {
   const router = useRouter();
   const [pending, setPending] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ id: string; items: FeedItem[] } | null>(null);
   async function save(form: HTMLFormElement, id?: string) {
     const data = new FormData(form);
     setPending(id ?? "new");
@@ -37,6 +39,13 @@ export function AiSourceManager({ sources }: { sources: Source[] }) {
     toast.success("Kaynak silindi.");
     router.refresh();
   }
+  async function showPreview(id: string) {
+    setPending(id);
+    const result = await requestJson<{ items: FeedItem[] }>(`/api/admin/ai-sources/${id}/preview`, { method: "POST" });
+    setPending(null);
+    if (!result.ok) { toast.error(result.message); return; }
+    setPreview({ id, items: result.data.items });
+  }
   return <section>
     <h2 className="text-xl font-semibold text-white">AI haber kaynakları</h2>
     <p className="mt-2 text-sm text-zinc-400">Kaynak adreslerini ve kontrol aralıklarını yönet. Etkin olmayan kaynaklar kontrol kapsamına alınmaz.</p>
@@ -50,10 +59,18 @@ export function AiSourceManager({ sources }: { sources: Source[] }) {
           <p className="mt-1 break-all text-xs text-zinc-400">{source.url}</p>
           <p className="mt-1 text-xs text-zinc-500">{source.enabled ? "Etkin" : "Kapalı"} · {source.trusted ? "Güvenilir" : "Standart"} · {source.intervalMinutes} dk · {source.language}</p></div>
         <div className="flex gap-2 text-xs">
+          <button type="button" disabled={pending !== null} onClick={() => void showPreview(source.id)} className="rounded-md border border-line px-3 py-1.5 text-white disabled:opacity-60">Önizle</button>
           <button type="button" disabled={pending !== null} onClick={() => setEditing(editing === source.id ? null : source.id)} className="rounded-md border border-line px-3 py-1.5 text-white disabled:opacity-60">{editing === source.id ? "Vazgeç" : "Düzenle"}</button>
           <button type="button" disabled={pending !== null} onClick={() => void remove(source.id)} className="rounded-md border border-line px-3 py-1.5 text-white disabled:opacity-60">Sil</button>
         </div>
       </div>
+      {preview?.id === source.id ? <div className="mt-4 border-t border-line pt-3 text-sm">
+        <h4 className="font-medium text-white">Kaynak önizlemesi</h4>
+        {preview.items.length ? <ul className="mt-2 space-y-2">{preview.items.map((item) => <li key={item.url}>
+          <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-accent-400 hover:text-accent-300">{item.title}</a>
+          {item.summary ? <p className="text-xs text-zinc-400">{item.summary}</p> : null}
+        </li>)}</ul> : <p className="mt-2 text-zinc-400">Kaynakta uygun içerik yok.</p>}
+      </div> : null}
       {editing === source.id ? <div className="mt-5 border-t border-line pt-4"><SourceForm source={source} onSave={(form) => void save(form, source.id)} pending={pending !== null} /></div> : null}
     </li>)}</ul>
     {!sources.length ? <p className="mt-5 rounded-xl border border-line p-5 text-sm text-zinc-400">Henüz haber kaynağı eklenmedi.</p> : null}

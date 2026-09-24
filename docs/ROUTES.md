@@ -70,7 +70,7 @@ period or lift their bans.
 | `/admin/moderation`             | RSC+API | `moderation.access` (queue); decisions need `moderation.resolve` |
 | `/admin/bans`                   | RSC+API | `user.ban` (search, ban/unban lower-ranked users) |
 | `/admin/news` (+ `new`, `[id]`) | RSC+API | `news.write` draft/own review; `news.manage` publish/archive |
-| `/admin/ai-news`                | RSC+API | `ai.manage` (sources and provider config) |
+| `/admin/ai-news`                | RSC+API | `ai.manage` (sources, live feed preview and provider config) |
 | `/admin/installer`              | RSC+CA | `installer.manage`          |
 | `/admin/homepage`               | RSC+CA | `homepage.manage`           |
 | `/admin/settings`               | RSC+CA | `admin.settings`            |
@@ -145,6 +145,7 @@ instead of a destructive row delete.
 | `/api/admin/news/[id]/status`         | POST             | `news.write` review / `news.manage` publish, archive |
 | `/api/admin/ai-sources`                | GET/POST         | `ai.manage` | list/create AI news sources |
 | `/api/admin/ai-sources/[id]`           | PATCH/DELETE     | `ai.manage` | edit/delete non-demo sources with audit |
+| `/api/admin/ai-sources/[id]/preview`   | POST             | `ai.manage` | bounded RSS/Atom/JSON feed preview |
 | `/api/admin/ai-config`                 | GET/PUT          | `ai.manage` | provider/model/prompt/confidence; auto publish unchanged |
 | `/api/notifications`                  | GET/PATCH        | member          |                                   |
 | `/api/installer/manifest/[packageId]` | GET              | public          | signed manifest                   |

@@ -72,6 +72,7 @@ import { decideReport, listModerationReports, reportForumContent } from "../serv
 import { listBanTargets, setUserBan } from "../services/admin/users";
 import { createNews, getAdminNewsArticle, getPublishedArticle, listAdminNews, listNewsCategories, listPublishedNews, transitionNews, updateNews } from "../services/news";
 import { createAiSource, deleteAiSource, getAiConfig, listAiSources, saveAiConfig, updateAiSource } from "../services/ai-sources";
+import { previewAiSource } from "../services/ai-preview";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -1643,7 +1644,7 @@ test("forum topics are owner-authored, visible only in enabled categories and au
       const [authorPosts] = await tx.select({ value: schema.users.postCount }).from(schema.users).where(eq(schema.users.id, user.id));
       assert.equal(authorPosts?.value, 2);
       const audits = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
-        .where(eq(schema.auditLogs.targetType, "forum_topic"));
+        .where(and(eq(schema.auditLogs.targetType, "forum_topic"), eq(schema.auditLogs.actorId, user.id)));
       assert.equal(audits.filter((entry) => entry.action === "forum.topic.create").length, 2);
       await tx.update(schema.forumTopics).set({ status: "hidden" }).where(eq(schema.forumTopics.id, first.id));
       assert.equal(await getForumTopic(db, first.slug), null);
@@ -2043,6 +2044,15 @@ test("AI source CRUD enforces manage grant, validation, unique URLs and audits",
       assert.equal((await getAiConfig(db, actor)).prompt, "Only factual claims.");
       const created = await createAiSource(db, actor, input);
       assert.equal(created.enabled, false);
+      const xml = `<rss version="2.0"><channel><item><title>Preview result</title><link>https://example.org/article</link><description>Feed content</description></item></channel></rss>`;
+      const fakeFetch = async () => new Response(xml, { status: 200 }) as Response;
+      const addresses = async () => ["93.184.216.34"];
+      const preview = await previewAiSource(db, actor, created.id, fakeFetch as typeof fetch, addresses);
+      assert.equal(preview.items[0]?.title, "Preview result");
+      await assert.rejects(previewAiSource(db, { ...actor, permissions: new Set() }, created.id, fakeFetch as typeof fetch, addresses), /ai.manage/);
+      await assert.rejects(previewAiSource(db, actor, created.id, fakeFetch as typeof fetch,
+        async () => ["127.0.0.1"]), /Özel ağdaki/);
+      await assert.rejects(previewAiSource(db, actor, created.id, async () => new Response("invalid", { status: 200 }), addresses), /Feed değil/);
       assert.ok((await listAiSources(db, actor)).some((source) => source.id === created.id));
       await assert.rejects(createAiSource(db, actor, input), /zaten kayıtlı/);
       const changed = await updateAiSource(db, actor, created.id, { ...input, name: "Source Revised",

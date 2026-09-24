@@ -614,3 +614,19 @@ validates provider/model/range/permission constraints and the persisted value.
 admin form/API, invalid-provider 400, persistence, unchanged auto-publish and
 audit. The test account and audit entry were removed and the previous provider
 settings restored.
+
+Feed-preview slice: permitted admins can open a real source preview from
+`/admin/ai-news`. The preview endpoint fetches bounded (512 KiB, 8 seconds)
+RSS/Atom/JSON Feed content, rejects localhost/private resolved addresses and
+redirects, and returns up to 10 de-duplicated headlines with plain-text
+summaries. RSS/Atom/JSON parsing and malicious/duplicate links are covered by
+unit tests; PostgreSQL covers permissions, private-address rejection, live
+source lookup and malformed-feed handling with an injected transport.
+`npm run check` passed 117 unit tests, typecheck, lint and build; all 41
+PostgreSQL tests passed. Live HTTP rendered a temporary admin's source card
+and retrieved 10 headlines from a public RSS feed (200); the source, account,
+sessions and audit rows were removed afterward.
+The XML dependency is pinned to `fast-xml-parser@5.11.1`; the forum integration
+audit assertion is scoped to its fixture actor so existing live audit rows do
+not affect the test. After the dependency update, `npm run check` passed 117
+unit tests and production build, and `npm run db:test` passed all 41 tests.
