@@ -4,7 +4,6 @@ import {
   ChevronRight,
   Crosshair,
   Download,
-  Flame,
   Layers,
   MessageCircle,
   Newspaper,
@@ -137,7 +136,7 @@ export default async function HomePage() {
           <div className="relative z-10">
             <p className="inline-flex items-center gap-2 rounded-full border border-accent-500/20 bg-accent-500/[0.08] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-accent-300">
               <span className="size-1.5 rounded-full bg-accent-400 shadow-[0_0_12px_rgba(255,106,0,.8)]" aria-hidden />
-              {heroContent.eyebrow}
+              {siteName} · {heroContent.eyebrow}
             </p>
 
             <h1 className="text-balance mt-6 max-w-3xl text-[clamp(2.9rem,7vw,5.8rem)] font-semibold leading-[0.93] tracking-[-0.055em] text-white">
