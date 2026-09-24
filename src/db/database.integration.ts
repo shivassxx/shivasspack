@@ -73,6 +73,7 @@ import { listBanTargets, setUserBan } from "../services/admin/users";
 import { createNews, getAdminNewsArticle, getPublishedArticle, listAdminNews, listNewsCategories, listPublishedNews, transitionNews, updateNews } from "../services/news";
 import { createAiSource, deleteAiSource, getAiConfig, listAiSources, saveAiConfig, updateAiSource } from "../services/ai-sources";
 import { previewAiSource } from "../services/ai-preview";
+import { checkAiSource } from "../services/ai-check";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -2063,13 +2064,25 @@ test("AI source CRUD enforces manage grant, validation, unique URLs and audits",
       assert.equal(stored?.trusted, true);
       assert.equal(stored?.intervalMinutes, 15);
       assert.equal(stored?.language, "en");
+      await assert.rejects(checkAiSource(db, { ...actor, permissions: new Set() }, created.id,
+        fakeFetch as typeof fetch, addresses), /ai.manage/);
+      const check = await checkAiSource(db, actor, created.id, fakeFetch as typeof fetch, addresses);
+      assert.deepEqual(check, { found: 1, queued: 1 });
+      await assert.rejects(checkAiSource(db, actor, created.id, fakeFetch as typeof fetch, addresses), /zaten kontrol edildi/);
+      const jobs = await tx.select().from(schema.aiJobs).where(eq(schema.aiJobs.sourceId, created.id));
+      assert.equal(jobs.filter((job) => job.type === "check_source" && job.status === "done").length, 1);
+      assert.equal(jobs.filter((job) => job.type === "draft_article" && job.status === "queued").length, 1);
+      assert.equal(jobs.find((job) => job.type === "draft_article")?.input.url, "https://example.org/article");
+      const [checkedSource] = await tx.select({ at: schema.aiSources.lastCheckedAt }).from(schema.aiSources)
+        .where(eq(schema.aiSources.id, created.id));
+      assert.ok(checkedSource?.at);
       await assert.rejects(updateAiSource(db, actor, `aisrc_unknown_${suffix}`, input), /bulunamadı/);
       await assert.rejects(deleteAiSource(db, actor, `aisrc_unknown_${suffix}`), /bulunamadı/);
       await deleteAiSource(db, actor, created.id);
       assert.ok(!(await listAiSources(db, actor)).some((source) => source.id === created.id));
       const audits = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
         .where(eq(schema.auditLogs.targetId, created.id));
-      assert.deepEqual(audits.map((entry) => entry.action).sort(), ["ai.source.create", "ai.source.delete", "ai.source.update"]);
+      assert.deepEqual(audits.map((entry) => entry.action).sort(), ["ai.source.check", "ai.source.create", "ai.source.delete", "ai.source.update"]);
       const [configAudit] = await tx.select({ action: schema.auditLogs.action }).from(schema.auditLogs)
         .where(and(eq(schema.auditLogs.targetType, "ai_config"), eq(schema.auditLogs.actorId, actor.id!)));
       assert.equal(configAudit?.action, "ai.config.update");

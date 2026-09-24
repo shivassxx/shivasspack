@@ -630,3 +630,13 @@ The XML dependency is pinned to `fast-xml-parser@5.11.1`; the forum integration
 audit assertion is scoped to its fixture actor so existing live audit rows do
 not affect the test. After the dependency update, `npm run check` passed 117
 unit tests and production build, and `npm run db:test` passed all 41 tests.
+
+Manual source checks now use `POST /api/admin/ai-sources/[id]/check` for enabled
+sources. A successful check records a `check_source` job, updates the last
+check time and audit log, and queues deduplicated `draft_article` jobs by
+canonical feed URL. The source's control interval prevents repeated checks;
+no article is published by a check. Draft jobs await the provider worker in
+the next slice. Feed transport pins the validated DNS address using an Undici
+agent, preventing a second DNS lookup from redirecting the connection into
+a private network. `npm run check` passed 117 unit tests, lint, typecheck and
+production build; all 41 PostgreSQL tests passed.

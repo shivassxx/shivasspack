@@ -146,6 +146,7 @@ instead of a destructive row delete.
 | `/api/admin/ai-sources`                | GET/POST         | `ai.manage` | list/create AI news sources |
 | `/api/admin/ai-sources/[id]`           | PATCH/DELETE     | `ai.manage` | edit/delete non-demo sources with audit |
 | `/api/admin/ai-sources/[id]/preview`   | POST             | `ai.manage` | bounded RSS/Atom/JSON feed preview |
+| `/api/admin/ai-sources/[id]/check`     | POST             | `ai.manage` | interval-gated source check and deduplicated draft jobs |
 | `/api/admin/ai-config`                 | GET/PUT          | `ai.manage` | provider/model/prompt/confidence; auto publish unchanged |
 | `/api/notifications`                  | GET/PATCH        | member          |                                   |
 | `/api/installer/manifest/[packageId]` | GET              | public          | signed manifest                   |

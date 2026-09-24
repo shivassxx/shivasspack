@@ -1,5 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { BlockList } from "node:net";
+import { Agent, fetch as pinnedFetch } from "undici";
 import { eq } from "drizzle-orm";
 import type { Database } from "@/db/connection";
 import * as s from "@/db/schema";
@@ -36,8 +37,9 @@ export async function previewAiSource(db: Database, actor: Actor, id: string,
       url.hostname.toLowerCase() === "localhost" || url.hostname.toLowerCase().endsWith(".localhost")) {
     throw new AiSourceError("validation", "Kaynak adresi uygun değil.", 400);
   }
+  let resolved: string[];
   try {
-    const resolved = await addresses(url.hostname);
+    resolved = await addresses(url.hostname);
     if (!resolved.length || resolved.some((address) => address.toLowerCase().startsWith("::ffff:") ||
       blocked.check(address, address.includes(":") ? "ipv6" : "ipv4"))) {
       throw new AiSourceError("validation", "Özel ağdaki kaynaklar önizlenemez.", 400);
@@ -46,14 +48,24 @@ export async function previewAiSource(db: Database, actor: Actor, id: string,
     if (error instanceof AiSourceError) throw error;
     throw new AiSourceError("validation", "Kaynak adresi çözümlenemedi.", 400);
   }
+  // Pin the checked address for the actual connection: a second DNS lookup here
+  // would let a rebinding hostname reach a private service after validation.
+  const ip = resolved[0]!;
+  const dispatcher = new Agent({ connect: { lookup: (_host, options, callback) => {
+    const family = ip.includes(":") ? 6 : 4;
+    if (options.all) callback(null, [{ address: ip, family }]);
+    else callback(null, ip, family);
+  } }, maxResponseSize: 512 * 1024 });
   let response: Response;
   try {
-    response = await fetcher(url, { redirect: "error", signal: AbortSignal.timeout(8000),
-      headers: { Accept: "application/rss+xml, application/atom+xml, application/feed+json, application/xml, application/json" } });
-  } catch { throw new AiSourceError("validation", "Kaynak alınamadı.", 422); }
-  if (!response.ok) throw new AiSourceError("validation", "Kaynak yanıtı başarılı değil.", 422);
+    response = await (fetcher === fetch ? pinnedFetch(url, { dispatcher, redirect: "manual",
+      signal: AbortSignal.timeout(8000), headers: { Accept: "application/rss+xml, application/atom+xml, application/feed+json, application/xml, application/json" } }) as unknown as Promise<Response>
+      : fetcher(url, { redirect: "error", signal: AbortSignal.timeout(8000),
+        headers: { Accept: "application/rss+xml, application/atom+xml, application/feed+json, application/xml, application/json" } }));
+  } catch { await dispatcher.close(); throw new AiSourceError("validation", "Kaynak alınamadı.", 422); }
+  if (!response.ok) { await dispatcher.close(); throw new AiSourceError("validation", "Kaynak yanıtı başarılı değil.", 422); }
   const reader = response.body?.getReader();
-  if (!reader) throw new AiSourceError("validation", "Kaynak boş.", 422);
+  if (!reader) { await dispatcher.close(); throw new AiSourceError("validation", "Kaynak boş.", 422); }
   const chunks: Uint8Array[] = [];
   let length = 0;
   try {
@@ -64,7 +76,10 @@ export async function previewAiSource(db: Database, actor: Actor, id: string,
       if (length > 512 * 1024) throw new AiSourceError("validation", "Kaynak çok büyük.", 422);
       chunks.push(value);
     }
-  } finally { await reader.cancel().catch(() => undefined); }
+  } catch (error) {
+    if (error instanceof AiSourceError) throw error;
+    throw new AiSourceError("validation", "Kaynak alınamadı.", 422);
+  } finally { await reader.cancel().catch(() => undefined); await dispatcher.close(); }
   const bytes = new Uint8Array(length);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }

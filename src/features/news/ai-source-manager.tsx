@@ -46,6 +46,14 @@ export function AiSourceManager({ sources }: { sources: Source[] }) {
     if (!result.ok) { toast.error(result.message); return; }
     setPreview({ id, items: result.data.items });
   }
+  async function checkSource(id: string) {
+    setPending(id);
+    const result = await requestJson<{ found: number; queued: number }>(`/api/admin/ai-sources/${id}/check`, { method: "POST" });
+    setPending(null);
+    if (!result.ok) { toast.error(result.message); return; }
+    toast.success(`${result.data.found} başlık kontrol edildi, ${result.data.queued} taslak işi kuyruğa alındı.`);
+    router.refresh();
+  }
   return <section>
     <h2 className="text-xl font-semibold text-white">AI haber kaynakları</h2>
     <p className="mt-2 text-sm text-zinc-400">Kaynak adreslerini ve kontrol aralıklarını yönet. Etkin olmayan kaynaklar kontrol kapsamına alınmaz.</p>
@@ -57,9 +65,10 @@ export function AiSourceManager({ sources }: { sources: Source[] }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><h3 className="font-semibold text-white">{source.name}</h3>
           <p className="mt-1 break-all text-xs text-zinc-400">{source.url}</p>
-          <p className="mt-1 text-xs text-zinc-500">{source.enabled ? "Etkin" : "Kapalı"} · {source.trusted ? "Güvenilir" : "Standart"} · {source.intervalMinutes} dk · {source.language}</p></div>
+          <p className="mt-1 text-xs text-zinc-500">{source.enabled ? "Etkin" : "Kapalı"} · {source.trusted ? "Güvenilir" : "Standart"} · {source.intervalMinutes} dk · {source.language}{source.lastCheckedAt ? ` · Son kontrol: ${new Date(source.lastCheckedAt).toLocaleString("tr-TR")}` : ""}</p></div>
         <div className="flex gap-2 text-xs">
           <button type="button" disabled={pending !== null} onClick={() => void showPreview(source.id)} className="rounded-md border border-line px-3 py-1.5 text-white disabled:opacity-60">Önizle</button>
+          {source.enabled ? <button type="button" disabled={pending !== null} onClick={() => void checkSource(source.id)} className="rounded-md border border-line px-3 py-1.5 text-white disabled:opacity-60">Kontrol et</button> : null}
           <button type="button" disabled={pending !== null} onClick={() => setEditing(editing === source.id ? null : source.id)} className="rounded-md border border-line px-3 py-1.5 text-white disabled:opacity-60">{editing === source.id ? "Vazgeç" : "Düzenle"}</button>
           <button type="button" disabled={pending !== null} onClick={() => void remove(source.id)} className="rounded-md border border-line px-3 py-1.5 text-white disabled:opacity-60">Sil</button>
         </div>
