@@ -9,7 +9,7 @@ export function SiteNav({ items }: { items: readonly NavItem[] }) {
   const pathname = usePathname();
 
   return (
-    <nav aria-label="Ana menü" className="ml-2 hidden items-center gap-1 lg:flex">
+    <nav aria-label="Ana menü" className="ml-4 hidden items-center gap-1 xl:flex">
       {items.map((item) => {
         const active = isNavItemActive(pathname, item.href);
         return (
@@ -18,13 +18,19 @@ export function SiteNav({ items }: { items: readonly NavItem[] }) {
             href={item.href}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "rounded-md px-2.5 py-1.5 text-sm transition",
+              "relative rounded-full px-3 py-2 text-[13px] font-medium transition",
               active
-                ? "bg-surface-800 text-white"
-                : "text-zinc-400 hover:bg-surface-800 hover:text-white",
+                ? "text-white"
+                : "text-zinc-400 hover:bg-white/[0.04] hover:text-white",
             )}
           >
             {item.label}
+            {active ? (
+              <span
+                aria-hidden
+                className="absolute inset-x-3 -bottom-[9px] h-px bg-gradient-to-r from-transparent via-accent-500 to-transparent"
+              />
+            ) : null}
           </Link>
         );
       })}
