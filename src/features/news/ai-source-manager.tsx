@@ -9,7 +9,7 @@ import type { FeedItem } from "@/lib/news-feed";
 
 type Source = Awaited<ReturnType<typeof listAiSources>>[number];
 
-export function AiSourceManager({ sources }: { sources: Source[] }) {
+export function AiSourceManager({ sources, canGenerate }: { sources: Source[]; canGenerate: boolean }) {
   const router = useRouter();
   const [pending, setPending] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -54,9 +54,19 @@ export function AiSourceManager({ sources }: { sources: Source[] }) {
     toast.success(`${result.data.found} başlık kontrol edildi, ${result.data.queued} taslak işi kuyruğa alındı.`);
     router.refresh();
   }
+  async function runJob() {
+    setPending("job");
+    const result = await requestJson<{ processed: boolean; articleId?: string }>("/api/admin/ai-jobs/run", { method: "POST" });
+    setPending(null);
+    if (!result.ok) { toast.error(result.message); return; }
+    toast.success(result.data.processed ? "Taslak oluşturuldu; haber yönetiminde inceleyebilirsin." : "Bekleyen taslak işi yok.");
+    router.refresh();
+  }
   return <section>
     <h2 className="text-xl font-semibold text-white">AI haber kaynakları</h2>
     <p className="mt-2 text-sm text-zinc-400">Kaynak adreslerini ve kontrol aralıklarını yönet. Etkin olmayan kaynaklar kontrol kapsamına alınmaz.</p>
+    {canGenerate ? <button type="button" disabled={pending !== null} onClick={() => void runJob()}
+      className="mt-4 rounded-md bg-accent-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">Bekleyen bir taslak oluştur</button> : null}
     <div className="mt-6 rounded-xl border border-line bg-surface-900 p-5">
       <h3 className="mb-4 font-medium text-white">Yeni kaynak ekle</h3>
       <SourceForm onSave={(form) => void save(form)} pending={pending !== null} />

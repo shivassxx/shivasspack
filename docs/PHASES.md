@@ -640,3 +640,16 @@ the next slice. Feed transport pins the validated DNS address using an Undici
 agent, preventing a second DNS lookup from redirecting the connection into
 a private network. `npm run check` passed 117 unit tests, lint, typecheck and
 production build; all 41 PostgreSQL tests passed.
+
+The next slice connects queued draft work to OpenAI, Anthropic and Gemini
+response adapters. An `ai.manage` operator can run one queued job using the
+server-only `AI_API_KEY` when provider and model are configured. The worker
+claims a job with `FOR UPDATE SKIP LOCKED`, validates generated article fields,
+inserts a **draft** with source attribution and confidence, and records the
+completed job and audit entry transactionally. Provider failures mark the
+job failed without creating an article; duplicate source URLs do not create
+another article. No generated article is automatically sent to review or
+published. Unit tests use mock provider responses, and PostgreSQL integration
+tests cover the resulting draft and failure paths; live provider verification
+requires an API key. `npm run check` passed typecheck, lint, 121 unit tests and
+production build; all 41 PostgreSQL tests passed.

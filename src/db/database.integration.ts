@@ -74,6 +74,7 @@ import { createNews, getAdminNewsArticle, getPublishedArticle, listAdminNews, li
 import { createAiSource, deleteAiSource, getAiConfig, listAiSources, saveAiConfig, updateAiSource } from "../services/ai-sources";
 import { previewAiSource } from "../services/ai-preview";
 import { checkAiSource } from "../services/ai-check";
+import { runAiDraftJob } from "../services/ai-worker";
 
 const appUrl = process.env.DATABASE_URL;
 const ownerUrl = process.env.DATABASE_MIGRATION_URL;
@@ -2045,6 +2046,7 @@ test("AI source CRUD enforces manage grant, validation, unique URLs and audits",
       assert.equal((await getAiConfig(db, actor)).prompt, "Only factual claims.");
       const created = await createAiSource(db, actor, input);
       assert.equal(created.enabled, false);
+      await assert.rejects(checkAiSource(db, actor, created.id), /etkin değil/);
       const xml = `<rss version="2.0"><channel><item><title>Preview result</title><link>https://example.org/article</link><description>Feed content</description></item></channel></rss>`;
       const fakeFetch = async () => new Response(xml, { status: 200 }) as Response;
       const addresses = async () => ["93.184.216.34"];
@@ -2076,6 +2078,32 @@ test("AI source CRUD enforces manage grant, validation, unique URLs and audits",
       const [checkedSource] = await tx.select({ at: schema.aiSources.lastCheckedAt }).from(schema.aiSources)
         .where(eq(schema.aiSources.id, created.id));
       assert.ok(checkedSource?.at);
+      await assert.rejects(runAiDraftJob(db, { ...actor, permissions: new Set() }, "test-key"), /ai.manage/);
+      await assert.rejects(runAiDraftJob(db, actor, undefined), /API anahtarı/);
+      const generated = { title: `Feed item ${suffix} haberi`,
+        excerpt: "Kaynağın verilerine dayanan denetlenecek bir haber özeti.",
+        content: "Kaynak özetine dayanarak hazırlanan ve yayın öncesi editör tarafından incelenecek taslak haber metni.",
+        confidence: 0.8 };
+      const providerFetch = async () => Response.json({ choices: [{ message: { content: JSON.stringify(generated) } }] });
+      const run = await runAiDraftJob(db, actor, "test-key", providerFetch as typeof fetch);
+      assert.equal(run.processed, true);
+      if (!run.processed) throw new Error("Expected a draft job.");
+      assert.equal(run.duplicate, false);
+      const [draft] = await tx.select().from(schema.newsArticles).where(eq(schema.newsArticles.id, run.articleId));
+      assert.equal(draft?.status, "draft");
+      assert.equal(draft?.sourceUrl, "https://example.org/article");
+      assert.equal(draft?.aiSourceId, created.id);
+      assert.equal(await getPublishedArticle(db, draft!.slug), null);
+      assert.deepEqual(await runAiDraftJob(db, actor, "test-key", providerFetch as typeof fetch), { processed: false });
+      const [failedJob] = await tx.insert(schema.aiJobs).values({ sourceId: created.id, type: "draft_article",
+        input: { title: "Bad response", summary: "Something happened.", url: `https://example.org/${suffix}/bad` } })
+        .returning({ id: schema.aiJobs.id });
+      assert.ok(failedJob);
+      await assert.rejects(runAiDraftJob(db, actor, "test-key", async () => new Response("No", { status: 503 })), /HTTP 503/);
+      const [failure] = await tx.select({ status: schema.aiJobs.status, error: schema.aiJobs.error })
+        .from(schema.aiJobs).where(eq(schema.aiJobs.id, failedJob.id));
+      assert.equal(failure?.status, "failed");
+      assert.match(failure?.error ?? "", /HTTP 503/);
       await assert.rejects(updateAiSource(db, actor, `aisrc_unknown_${suffix}`, input), /bulunamadı/);
       await assert.rejects(deleteAiSource(db, actor, `aisrc_unknown_${suffix}`), /bulunamadı/);
       await deleteAiSource(db, actor, created.id);

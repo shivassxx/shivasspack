@@ -9,8 +9,10 @@ import { SubmissionError } from "@/lib/submission-state";
 import { AuthorizationError } from "@/services/rbac";
 import { NewsError } from "@/services/news";
 import { AiSourceError } from "@/services/ai-sources";
+import { AiProviderError } from "@/services/ai-provider";
 
 export function adminErrorResponse(error: unknown): Response {
+  if (error instanceof AiProviderError) return jsonError(422, "provider_error", error.message);
   if (error instanceof CatalogError || error instanceof PackAdminError || error instanceof HomepageError || error instanceof SettingsError || error instanceof RoleAdminError || error instanceof UserAdminError || error instanceof SubmissionError || error instanceof AuthorizationError || error instanceof NewsError || error instanceof AiSourceError) {
     return jsonError(error.status, error.code, error.message);
   }

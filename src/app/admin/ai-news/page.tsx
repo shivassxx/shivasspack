@@ -18,5 +18,6 @@ export default async function AiNewsPage() {
   if (!session || !allowed) return <PageState code="403" title="AI haber yönetimi iznin yok" description="Bu bölüm ai.manage izni gerektirir." />;
   const db = getDatabase().db;
   const [config, sources] = await Promise.all([getAiConfig(db, session.actor), listAiSources(db, session.actor)]);
-  return <><AiConfigForm config={config} /><AiSourceManager sources={sources} /></>;
+  return <><AiConfigForm config={config} /><AiSourceManager sources={sources}
+    canGenerate={Boolean(process.env.AI_API_KEY && config.provider !== "none" && config.model)} /></>;
 }
