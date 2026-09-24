@@ -4,10 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 
-/**
- * Header'daki hızlı arama kutusu.
- * ⌘K palette ile aynı yerden tetiklenir; şimdilik basit bir yönlendirme.
- */
 export function NavSearch() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -28,10 +24,7 @@ export function NavSearch() {
         setOpen(true);
         requestAnimationFrame(() => inputRef.current?.focus());
       }
-      if (e.key === "Escape") {
-        setOpen(false);
-        requestAnimationFrame(() => triggerRef.current?.focus());
-      }
+      if (e.key === "Escape") closeSearch(true);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -40,9 +33,7 @@ export function NavSearch() {
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
     };
     document.addEventListener("pointerdown", onPointerDown);
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -62,41 +53,40 @@ export function NavSearch() {
       <button
         type="button"
         ref={triggerRef}
-        onClick={() => {
-          if (open) closeSearch();
-          else setOpen(true);
-        }}
-        className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-surface-900 px-2.5 text-sm text-zinc-500 transition hover:border-line-strong hover:text-zinc-300"
+        onClick={() => setOpen((value) => !value)}
+        className="inline-flex h-9 min-w-9 items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.035] px-3 text-sm text-zinc-400 transition hover:border-white/[0.14] hover:bg-white/[0.06] hover:text-white md:min-w-48"
         aria-expanded={open}
         aria-label="Paket ara"
       >
         <Search className="size-4" aria-hidden />
-        <span className="hidden md:inline">Ara…</span>
-        <kbd className="hidden rounded border border-line bg-surface-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 md:inline">
+        <span className="hidden flex-1 text-left md:inline">Paket ara...</span>
+        <kbd className="hidden rounded border border-white/[0.08] bg-black/25 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 md:inline">
           ⌘K
         </kbd>
       </button>
 
-      {open ? <div
-        className="absolute right-0 top-11 w-72 overflow-hidden rounded-lg border border-line bg-surface-900 shadow-xl"
-        role="dialog"
-        aria-label="Paket arama"
-      >
-        <form onSubmit={submit} className="flex items-center gap-2 border-b border-line px-3">
-          <Search className="size-4 shrink-0 text-zinc-500" aria-hidden />
-          <input
-            ref={inputRef}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Paket, etiket veya yazar…"
-            className="h-11 w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
-            aria-label="Arama terimi"
-          />
-        </form>
-        <p className="px-3 py-3 text-xs text-zinc-600">
-          Aramak için Enter&apos;a bas, kapatmak için Esc.
-        </p>
-      </div> : null}
+      {open ? (
+        <div
+          className="absolute right-0 top-12 z-50 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-white/[0.1] bg-[#0b0b0d]/95 shadow-2xl shadow-black/50 backdrop-blur-xl"
+          role="dialog"
+          aria-label="Paket arama"
+        >
+          <form onSubmit={submit} className="flex items-center gap-3 border-b border-white/[0.08] px-4">
+            <Search className="size-4 shrink-0 text-accent-400" aria-hidden />
+            <input
+              ref={inputRef}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Paket, etiket veya içerik üreticisi..."
+              className="h-13 w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+              aria-label="Arama terimi"
+            />
+          </form>
+          <p className="px-4 py-3 text-xs text-zinc-600">
+            Enter ile ara · Esc ile kapat
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }
