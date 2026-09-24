@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import type { Database } from "@/db/connection";
 import * as s from "@/db/schema";
 import { AiSourceError } from "@/services/ai-sources";
@@ -11,17 +11,26 @@ export async function checkAiSource(db: Database, actor: Actor, id: string,
   fetcher: typeof fetch = fetch, addresses?: (host: string) => Promise<string[]>) {
   assertActive(actor);
   requirePermission(actor, "ai.manage");
-  const [source] = await db.select().from(s.aiSources)
-    .where(and(eq(s.aiSources.id, id), eq(s.aiSources.isDemo, false))).limit(1);
-  if (!source) throw new AiSourceError("not_found", "Kaynak bulunamadı.", 404);
-  if (!source.enabled) throw new AiSourceError("conflict", "Kaynak etkin değil.", 409);
   const now = new Date();
-  const bucket = Math.floor(now.getTime() / (source.intervalMinutes * 60_000));
-  const dedupeKey = `check:${id}:${bucket}`;
-  const [job] = await db.insert(s.aiJobs).values({ sourceId: id, type: "check_source",
-    status: "running", attempts: 1, startedAt: now, dedupeKey })
-    .onConflictDoNothing({ target: s.aiJobs.dedupeKey }).returning({ id: s.aiJobs.id });
-  if (!job) throw new AiSourceError("conflict", "Bu aralıkta kaynak zaten kontrol edildi.", 409);
+  const { source, job } = await db.transaction(async (tx) => {
+    const [source] = await tx.select().from(s.aiSources)
+      .where(and(eq(s.aiSources.id, id), eq(s.aiSources.isDemo, false))).for("update");
+    if (!source) throw new AiSourceError("not_found", "Kaynak bulunamadı.", 404);
+    if (!source.enabled) throw new AiSourceError("conflict", "Kaynak etkin değil.", 409);
+    if (source.lastCheckedAt && now.getTime() - source.lastCheckedAt.getTime() < source.intervalMinutes * 60_000) {
+      throw new AiSourceError("conflict", "Kaynak kontrol aralığı henüz dolmadı.", 409);
+    }
+    const [running] = await tx.select({ id: s.aiJobs.id }).from(s.aiJobs)
+      .where(and(eq(s.aiJobs.sourceId, id), eq(s.aiJobs.type, "check_source"),
+        eq(s.aiJobs.status, "running"), gt(s.aiJobs.startedAt, new Date(now.getTime() - 2 * 60_000)))).limit(1);
+    if (running) throw new AiSourceError("conflict", "Kaynak zaten kontrol ediliyor.", 409);
+    const bucket = Math.floor(now.getTime() / (source.intervalMinutes * 60_000));
+    const [job] = await tx.insert(s.aiJobs).values({ sourceId: id, type: "check_source",
+      status: "running", attempts: 1, startedAt: now, dedupeKey: `check:${id}:${bucket}` })
+      .onConflictDoNothing({ target: s.aiJobs.dedupeKey }).returning({ id: s.aiJobs.id });
+    if (!job) throw new AiSourceError("conflict", "Bu aralıkta kaynak zaten kontrol edildi.", 409);
+    return { source, job };
+  });
   try {
     const { items } = await previewAiSource(db, actor, id, fetcher, addresses);
     const completed = await db.transaction(async (tx) => {

@@ -2070,7 +2070,7 @@ test("AI source CRUD enforces manage grant, validation, unique URLs and audits",
         fakeFetch as typeof fetch, addresses), /ai.manage/);
       const check = await checkAiSource(db, actor, created.id, fakeFetch as typeof fetch, addresses);
       assert.deepEqual(check, { found: 1, queued: 1 });
-      await assert.rejects(checkAiSource(db, actor, created.id, fakeFetch as typeof fetch, addresses), /zaten kontrol edildi/);
+      await assert.rejects(checkAiSource(db, actor, created.id, fakeFetch as typeof fetch, addresses), /aralığı henüz dolmadı/);
       const jobs = await tx.select().from(schema.aiJobs).where(eq(schema.aiJobs.sourceId, created.id));
       assert.equal(jobs.filter((job) => job.type === "check_source" && job.status === "done").length, 1);
       assert.equal(jobs.filter((job) => job.type === "draft_article" && job.status === "queued").length, 1);

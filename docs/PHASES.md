@@ -653,3 +653,6 @@ published. Unit tests use mock provider responses, and PostgreSQL integration
 tests cover the resulting draft and failure paths; live provider verification
 requires an API key. `npm run check` passed typecheck, lint, 121 unit tests and
 production build; all 41 PostgreSQL tests passed.
+The source-check gate also compares the actual last successful check timestamp
+under a source-row lock and rejects overlapping running checks, including
+requests that cross a fixed interval bucket boundary.
